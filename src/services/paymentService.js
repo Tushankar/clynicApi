@@ -74,6 +74,10 @@ async function claimAndApply(ctx, { orderId, paymentId, method = 'online' }) {
     { new: true }
   );
   if (!claimed) return { applied: false, reason: 'already_processed' };
+  // Audit the claim transition too, so the money trail covers created→processing→paid (rule 7).
+  // The atomic findOneAndUpdate above is intentional (idempotency/concurrency) and stays inline;
+  // it is always clinic-scoped, so tenant isolation holds without the tenant repo.
+  await AuditLog.create({ clinicId: ctx.clinicId, actorId: ctx.actorId || null, actorRole: ctx.actorRole || null, action: 'update', entityType: 'Payment', entityId: claimed._id, after: { status: 'processing', paymentId } });
   await applyCapture(ctx, claimed); // idempotent — see above
   await Payment.updateOne({ clinicId: ctx.clinicId, _id: claimed._id }, { $set: { status: 'paid' } });
   await auditCapture(ctx, claimed);

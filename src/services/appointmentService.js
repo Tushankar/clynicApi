@@ -1,6 +1,6 @@
 'use strict';
 
-const { Appointment, Doctor, Patient } = require('../models');
+const { Appointment, Doctor, Patient, AuditLog } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 const { nextSequence } = require('../lib/sequence');
 const { dayRange, dateKey, addMinutes, parseDateOnly } = require('../lib/datetime');
@@ -100,9 +100,22 @@ async function recordVisitCompleted(ctx, patientId, visitedAt) {
       { $inc: { visitCount: 1 }, $set: { lastVisitAt: visitedAt || new Date() } },
       { new: true }
     );
-    if (updated && updated.visitCount >= 2 && !(updated.tags || []).includes('repeat')) {
+    if (!updated) return;
+    if (updated.visitCount >= 2 && !(updated.tags || []).includes('repeat')) {
       await Patient.updateOne({ clinicId: ctx.clinicId, _id: patientId }, { $addToSet: { tags: 'repeat' } });
     }
+    // Rule 7: a patient write must be audited. The atomic $inc keeps concurrency-safe counts,
+    // so we record the audit entry explicitly rather than via the read-then-save tenant repo.
+    await AuditLog.create({
+      clinicId: ctx.clinicId,
+      actorId: ctx.actorId || null,
+      actorRole: ctx.actorRole || null,
+      action: 'update',
+      entityType: 'Patient',
+      entityId: patientId,
+      before: { visitCount: updated.visitCount - 1 },
+      after: { visitCount: updated.visitCount, lastVisitAt: updated.lastVisitAt },
+    });
   } catch {
     /* denormalized counter — never block the clinical transition on it */
   }

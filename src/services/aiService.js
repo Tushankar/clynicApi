@@ -124,7 +124,14 @@ async function approveDraft(ctx, draftId, { editedContent, doctorId } = {}) {
   if (!draft) throw new AppError(404, 'Draft not found');
   if (draft.status !== 'pending_review') throw new AppError(409, `Draft already ${draft.status}`);
 
-  const finalContent = (editedContent && editedContent.trim()) || draft.content;
+  // Rule 2 hardening: a draft the guard FLAGGED (diagnosis-like language) may not be approved
+  // verbatim — the doctor must edit it first, so flagged AI text can never be saved as-is.
+  const edited = editedContent && editedContent.trim();
+  if (draft.flagged && !edited) {
+    throw new AppError(400, 'This draft was flagged for possible clinical language. Please edit it before approving.');
+  }
+
+  const finalContent = edited || draft.content;
   let resultNoteId = null;
 
   // Clinical drafts become a doctor-authored note on approval. (Intake stays an intake record.)

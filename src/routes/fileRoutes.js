@@ -10,5 +10,7 @@ const ctrl = require('../controllers/fileController');
  */
 const router = express.Router();
 router.get('/report/:id', ctrl.streamReport);
+// Generic signed-blob byte route (storage.getSignedUrl links point here). Token-authorized.
+router.get('/blob', ctrl.streamBlob);
 
 module.exports = router;

@@ -1,6 +1,8 @@
 'use strict';
 
 const reportService = require('../services/reportService');
+const storage = require('../lib/storage');
+const signing = require('../lib/signing');
 
 /**
  * Streams report bytes for a valid signed token. NO Clerk auth — the HMAC token
@@ -29,4 +31,27 @@ async function streamReport(req, res, next) {
   }
 }
 
-module.exports = { streamReport };
+/**
+ * Generic signed-blob stream (the reusable storage interface). Authorized ONLY by the HMAC
+ * token minted by storage.getSignedUrl (binds clinicId + key + expiry) — no public/unsigned
+ * path, no Clerk session (works in <img>/<a>). Streams bytes via the active storage driver, so
+ * swapping local→S3→Cloudinary needs no change here (hard rule 3).
+ */
+async function streamBlob(req, res, next) {
+  try {
+    const data = signing.verify(req.query.t);
+    if (!data || !data.cid || !data.key) return res.status(401).json({ error: 'invalid_or_expired_link' });
+    const stream = await storage.createReadStream({ clinicId: data.cid, key: data.key });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Type', data.mime || 'application/octet-stream');
+    stream.on('error', () => {
+      if (!res.headersSent) res.status(404).json({ error: 'file_unavailable' });
+      else res.destroy();
+    });
+    stream.pipe(res);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { streamReport, streamBlob };

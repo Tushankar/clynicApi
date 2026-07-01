@@ -7,14 +7,13 @@
  * driver) — WhatsApp for entitled+configured clinics (with a phone), email otherwise; and a
  * scheduled WhatsApp reminder delivers through the adapter.
  *
- * Runs with the cloud driver so channel selection is exercised; the network call is stubbed.
+ * Runs with the Baileys driver so channel selection is exercised; the actual send is stubbed
+ * (no real WhatsApp connection). The official Business API is not used anywhere.
  */
 process.env.NODE_ENV = 'development';
 process.env.DEV_AUTH = 'true';
 process.env.PAYMENTS_DRIVER = 'mock';
-process.env.WHATSAPP_DRIVER = 'cloud';
-process.env.WHATSAPP_TOKEN = 'test-token';
-process.env.WHATSAPP_PHONE_ID = '123456';
+process.env.WHATSAPP_DRIVER = 'baileys';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -25,7 +24,7 @@ const { Clinic, Reminder } = require('../src/models');
 const reminderService = require('../src/services/reminderService');
 const { sendNotification, adapters } = require('../src/services/notifications');
 
-// Stub the actual Graph API call so no real network request is made.
+// Stub the actual Baileys send so no real WhatsApp connection is made.
 let sent = [];
 const realSend = adapters.whatsapp.send;
 adapters.whatsapp.send = async ({ to, message }) => {
@@ -60,7 +59,7 @@ test('reminder channel is plan-gated: Standard+phone+configured → WhatsApp', a
   const appointment = { _id: new mongoose.Types.ObjectId(), patientId: new mongoose.Types.ObjectId(), scheduledAt: future(48), doctorName: 'Dr A' };
   const created = await reminderService.scheduleAppointmentReminders(ctx('org_wa_std'), { appointment, patient: { name: 'Rita', email: 'rita@x.com', phone: '+91 98765 43210' } });
   assert.ok(created.length >= 1);
-  assert.ok(created.every((r) => r.channel === 'whatsapp'), 'Standard + phone + cloud driver → WhatsApp');
+  assert.ok(created.every((r) => r.channel === 'whatsapp'), 'Standard + phone + baileys enabled → WhatsApp');
   console.log('  ✓ Standard + phone → WhatsApp reminders');
 });
 

@@ -82,7 +82,7 @@ async function summary(ctx, now = new Date()) {
     r.count(segmentFilter('repeat', now)),
     r.count(segmentFilter('followups_due', now)),
     r.count(segmentFilter('new_this_month', now)),
-    r.find({ dob: { $ne: null } }, { projection: { dob: 1 }, lean: true }),
+    r.find({ dob: { $ne: null } }, { projection: { dob: 1 }, lean: true, limit: 5000 }),
     highValue(ctx, 5),
   ]);
   const birthdays = withDob.filter((p) => {
@@ -101,7 +101,7 @@ async function summary(ctx, now = new Date()) {
 async function segment(ctx, key, { limit = 100 } = {}, now = new Date()) {
   if (key === 'high_value') return highValue(ctx, limit);
   if (key === 'birthdays') {
-    const withDob = await repo(ctx).find({ dob: { $ne: null } }, { lean: true });
+    const withDob = await repo(ctx).find({ dob: { $ne: null } }, { projection: { name: 1, phone: 1, dob: 1 }, lean: true, limit: 5000 });
     return withDob
       .map((p) => ({ ...p, daysToBirthday: daysToBirthday(p.dob, now) }))
       .filter((p) => p.daysToBirthday !== null && p.daysToBirthday <= BIRTHDAY_WINDOW_DAYS)

@@ -57,11 +57,11 @@ function buildMessage({ patientName, doctorName, scheduledAt }) {
  */
 async function scheduleAppointmentReminders(ctx, { appointment, patient, now = new Date() }) {
   // Channel is PLAN-GATED (§6.5 / 10.5): WhatsApp (Std/Prem) is used only when the clinic is
-  // ENTITLED, the WhatsApp channel is actually CONFIGURED (cloud driver — never route to an
-  // unconfigured mock in prod), and the patient has a phone. Otherwise email. WhatsApp is
-  // never load-bearing — email is the graceful fallback. clinicId comes from ctx (tenant-scoped).
+  // ENTITLED, the WhatsApp channel is actually ENABLED (Baileys — never route to a disabled
+  // channel), and the patient has a phone. Otherwise email. WhatsApp is never load-bearing —
+  // email is the graceful fallback. clinicId comes from ctx (tenant-scoped).
   const clinic = await Clinic.findOne({ clinicId: ctx.clinicId }).lean();
-  const whatsappAvailable = planHasFeature(clinic?.subscriptionPlan, 'WHATSAPP_REMINDERS') && config.whatsapp.driver === 'cloud';
+  const whatsappAvailable = planHasFeature(clinic?.subscriptionPlan, 'WHATSAPP_REMINDERS') && config.whatsapp.enabled;
   let channel = 'email';
   let to = patient?.email || null;
   if (whatsappAvailable && patient?.phone) {

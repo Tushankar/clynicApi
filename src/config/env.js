@@ -36,12 +36,12 @@ if (AI_DRIVER === 'mock' && !isLocalEnv) {
   throw new Error(`[env] AI_DRIVER='mock' is only permitted when NODE_ENV is development/test (got '${NODE_ENV}').`);
 }
 
-// WhatsApp channel driver (§10.5, step 8). Optional + non-load-bearing (email remains the
-// primary reminder channel), so it defaults to 'mock' everywhere; set 'cloud' + credentials
-// to use the official WhatsApp Business Cloud API. Plan-gated as WHATSAPP_REMINDERS (Std/Prem).
-const WHATSAPP_DRIVER = (process.env.WHATSAPP_DRIVER || 'mock').toLowerCase().trim();
-if (!['mock', 'cloud'].includes(WHATSAPP_DRIVER)) {
-  throw new Error(`[env] WHATSAPP_DRIVER must be 'mock' or 'cloud' (got '${process.env.WHATSAPP_DRIVER}').`);
+// WhatsApp channel — BAILEYS ONLY (unofficial, free, local). The official WhatsApp Business
+// Cloud API is intentionally NOT supported anywhere. Default 'none' (email-only); set 'baileys'
+// to enable the optional WhatsApp channel. Non-load-bearing — email is always the fallback.
+const WHATSAPP_DRIVER = (process.env.WHATSAPP_DRIVER || 'none').toLowerCase().trim();
+if (!['none', 'baileys'].includes(WHATSAPP_DRIVER)) {
+  throw new Error(`[env] WHATSAPP_DRIVER must be 'none' or 'baileys' (got '${process.env.WHATSAPP_DRIVER}'). The official WhatsApp Business API is not supported — use Baileys.`);
 }
 
 // Hard safety rail (hard rule 4 — RBAC integrity): the dev auth header bypass
@@ -76,15 +76,18 @@ const config = Object.freeze({
   nodeEnv: NODE_ENV,
   isProd,
   isDev,
-  port: Number(process.env.PORT || 4000),
-  corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173')
+  port: Number(process.env.PORT || 5000),
+  apiBaseUrl: process.env.API_BASE_URL || `http://localhost:${Number(process.env.PORT || 5000)}`,
+  // Allowed CORS origin(s): CLIENT_URL (single) preferred; CORS_ORIGINS (comma list) also honored.
+  corsOrigins: (process.env.CLIENT_URL || process.env.CORS_ORIGINS || 'http://localhost:5173')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
-  mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/clinic_saas',
+  mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/clinic-os',
   clerk: {
     secretKey: clerkKey('CLERK_SECRET_KEY'),
     publishableKey: clerkKey('CLERK_PUBLISHABLE_KEY'),
+    webhookSecret: process.env.CLERK_WEBHOOK_SECRET || '', // Clerk org/user webhook sync (unused until wired)
   },
   devAuth: DEV_AUTH,
 
@@ -100,25 +103,36 @@ const config = Object.freeze({
     secure: process.env.SMTP_SECURE === 'true',
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
-    from: process.env.MAIL_FROM || 'Clinic OS <no-reply@clinic-os.local>',
+    from: process.env.EMAIL_FROM || process.env.MAIL_FROM || 'Clinic OS <no-reply@clinic-os.local>',
+  },
+
+  // Provider-agnostic notifications: the default outbound channel (email). WhatsApp (Baileys)
+  // is opt-in per-notification / plan-gated; email is always the fallback (§10.5).
+  notify: {
+    defaultChannel: (process.env.NOTIFY_DEFAULT_CHANNEL || 'email').toLowerCase().trim(),
   },
 
   // Where the public booking page lives (for shareable links / QR codes).
-  publicWebUrl: process.env.PUBLIC_WEB_URL || 'http://localhost:5173',
+  publicWebUrl: process.env.PUBLIC_WEB_URL || process.env.CLIENT_URL || 'http://localhost:5173',
 
   // Private medical-file storage (hard rule 3). Files are NEVER public; access is
   // via short-lived signed URLs only. 'local' = private disk (dev); 's3' = private bucket.
   storage: {
-    driver: process.env.STORAGE_DRIVER || 'local',
-    localDir: process.env.PRIVATE_UPLOAD_DIR || '.private-uploads',
-    s3Bucket: process.env.S3_BUCKET || '',
-    s3Region: process.env.S3_REGION || '',
+    driver: (process.env.STORAGE_DRIVER || 'local').toLowerCase().trim(), // local | s3 | cloudinary
+    localDir: process.env.LOCAL_STORAGE_DIR || process.env.PRIVATE_UPLOAD_DIR || './storage',
+    s3Bucket: process.env.S3_BUCKET_NAME || process.env.S3_BUCKET || '',
+    s3Region: process.env.AWS_REGION || process.env.S3_REGION || '',
+    cloudinary: {
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+      apiKey: process.env.CLOUDINARY_API_KEY || '',
+      apiSecret: process.env.CLOUDINARY_API_SECRET || '',
+    },
     maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES || 15 * 1024 * 1024), // 15MB
   },
   // HMAC secret + TTL for signed file URLs. MUST be stable + shared across instances,
   // or URLs minted on one process/replica fail to verify on another. Required outside
   // local/dev (a per-boot random key is fine only for development/test).
-  fileSigningSecret: process.env.FILE_SIGNING_SECRET || (isLocalEnv ? crypto.randomBytes(32).toString('hex') : required('FILE_SIGNING_SECRET')),
+  fileSigningSecret: process.env.FILE_URL_SECRET || process.env.FILE_SIGNING_SECRET || (isLocalEnv ? crypto.randomBytes(32).toString('hex') : required('FILE_URL_SECRET')),
   fileUrlTtlSeconds: Number(process.env.FILE_URL_TTL_SECONDS || 120),
 
   // Payments (Razorpay). 'mock' = local gateway using the SAME HMAC-SHA256 signature
@@ -132,12 +146,11 @@ const config = Object.freeze({
     webhookSecret: PAYMENTS_DRIVER === 'razorpay' ? required('RAZORPAY_WEBHOOK_SECRET') : 'whsec_mock_dev',
   },
 
-  // WhatsApp Business Cloud API (§10.5). 'mock' logs; 'cloud' sends via the Graph API.
+  // WhatsApp via Baileys only (§10.5). Optional; email is the default/fallback channel.
   whatsapp: {
-    driver: WHATSAPP_DRIVER,
-    token: WHATSAPP_DRIVER === 'cloud' ? required('WHATSAPP_TOKEN') : '',
-    phoneId: WHATSAPP_DRIVER === 'cloud' ? required('WHATSAPP_PHONE_ID') : '',
-    apiVersion: process.env.WHATSAPP_API_VERSION || 'v21.0',
+    driver: WHATSAPP_DRIVER, // 'none' | 'baileys'
+    enabled: WHATSAPP_DRIVER === 'baileys',
+    baileysSessionDir: process.env.BAILEYS_SESSION_DIR || './baileys_auth', // local auth (gitignored)
   },
 
   // AI assistant (§5.10, hard rule 2 — NEVER diagnoses). The guardrail (disclaimer on every
@@ -165,7 +178,7 @@ const config = Object.freeze({
     .filter(Boolean),
 
   // Signs patient-portal sessions (issued after email OTP).
-  patientSessionSecret: process.env.PATIENT_SESSION_SECRET || (isLocalEnv ? crypto.randomBytes(32).toString('hex') : required('PATIENT_SESSION_SECRET')),
+  patientSessionSecret: process.env.PATIENT_JWT_SECRET || process.env.PATIENT_SESSION_SECRET || (isLocalEnv ? crypto.randomBytes(32).toString('hex') : required('PATIENT_JWT_SECRET')),
   patientSessionTtlHours: Number(process.env.PATIENT_SESSION_TTL_HOURS || 24),
 
   otp: {

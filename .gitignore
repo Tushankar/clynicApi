@@ -14,3 +14,6 @@ build/
 .mongodb-binaries/
 # private medical-file storage (hard rule 3) — never commit, never serve statically
 .private-uploads/
+storage/
+# WhatsApp (Baileys) device session — contains credentials, never commit
+baileys_auth/

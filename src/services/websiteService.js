@@ -25,6 +25,11 @@ const DEFAULT_CONTENT = {
 
 const str = (v, max = 2000) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const clampArr = (a, n) => (Array.isArray(a) ? a.slice(0, n) : []);
+// URL guards (defense against stored-XSS / SSRF via a malicious owner-entered URL): the map
+// embed must be https, gallery images http(s). Anything else (javascript:, data:, internal
+// hosts on other schemes) is dropped. This is the authoritative server-side check.
+const httpsUrl = (v) => { const s = str(v, 600); return /^https:\/\/[^\s]+$/i.test(s) ? s : ''; };
+const imageUrl = (v) => { const s = str(v, 500); return /^https?:\/\/[^\s]+$/i.test(s) ? s : ''; };
 
 /** Keep only known fields + bounded sizes so the stored blob can't be abused. */
 function sanitizeContent(input = {}) {
@@ -34,14 +39,14 @@ function sanitizeContent(input = {}) {
     headline: str(c.headline, 160),
     about: str(c.about, 4000),
     services: clampArr(c.services, 30).map((s) => ({ name: str(s.name, 120), description: str(s.description, 500) })).filter((s) => s.name),
-    gallery: clampArr(c.gallery, 24).map((u) => str(u, 500)).filter(Boolean),
+    gallery: clampArr(c.gallery, 24).map((u) => imageUrl(u)).filter(Boolean),
     reviews: clampArr(c.reviews, 30).map((r) => ({ author: str(r.author, 120), rating: Math.max(1, Math.min(5, Number(r.rating) || 5)), text: str(r.text, 800) })).filter((r) => r.text),
     hours: str(c.hours, 500),
     contact: {
       phone: str(c.contact?.phone, 40),
       email: str(c.contact?.email, 160),
       whatsapp: str(c.contact?.whatsapp, 40),
-      mapUrl: str(c.contact?.mapUrl, 600),
+      mapUrl: httpsUrl(c.contact?.mapUrl),
     },
   };
 }

@@ -1,7 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { clinicScoped, branchAware } = require('./plugins');
+const { clinicScoped, branchAware, softDeletable } = require('./plugins');
 
 /**
  * payments — a Razorpay order/payment attempt + its verified outcome (financial;
@@ -32,6 +32,7 @@ const paymentSchema = new mongoose.Schema(
 
 clinicScoped(paymentSchema);
 branchAware(paymentSchema);
+softDeletable(paymentSchema); // financial record — never hard-deleted (rule 6), like Invoice
 
 paymentSchema.index({ clinicId: 1, orderId: 1 }, { unique: true });
 // Idempotency anchor: a captured paymentId can be applied once per clinic.
