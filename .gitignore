@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+coverage/
+dist/
+build/
+.DS_Store
+.idea/
+.vscode/
+# mongodb-memory-server downloads binaries here
+.mongodb-binaries/
+# private medical-file storage (hard rule 3) — never commit, never serve statically
+.private-uploads/
