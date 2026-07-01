@@ -56,16 +56,15 @@ test('a FLAGGED AI draft cannot be approved without a doctor edit (rule 2)', asy
 
 test('website sanitization drops unsafe map + gallery URLs (SSRF/XSS)', async () => {
   const c = ctx('org_fix', 'owner');
-  const clean = await websiteService.updateContent(c, {
-    published: true,
+  const res = await websiteService.updateContent(c, {
     gallery: ['https://cdn.example/ok.jpg', 'javascript:alert(1)', 'http://x/img.png', 'data:text/html,evil'],
-    contact: { mapUrl: 'javascript:alert(1)' },
+    mapEmbed: 'javascript:alert(1)',
   });
-  assert.deepEqual(clean.gallery, ['https://cdn.example/ok.jpg', 'http://x/img.png'], 'only http(s) images kept');
-  assert.equal(clean.contact.mapUrl, '', 'non-https map URL dropped');
+  assert.deepEqual(res.content.gallery, ['https://cdn.example/ok.jpg', 'http://x/img.png'], 'only http(s) images kept');
+  assert.equal(res.content.mapEmbed, '', 'non-https map embed dropped');
 
-  const clean2 = await websiteService.updateContent(c, { contact: { mapUrl: 'https://www.google.com/maps/embed?pb=xyz' } });
-  assert.match(clean2.contact.mapUrl, /^https:\/\//, 'valid https map URL kept');
+  const res2 = await websiteService.updateContent(c, { mapEmbed: 'https://www.google.com/maps/embed?pb=xyz' });
+  assert.match(res2.content.mapEmbed, /^https:\/\//, 'valid https map embed kept');
   console.log('  ✓ website sanitizer blocks javascript:/data: and non-https URLs');
 });
 

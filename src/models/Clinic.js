@@ -48,7 +48,7 @@ const seoSchema = new mongoose.Schema(
 );
 const websiteSchema = new mongoose.Schema(
   {
-    published: { type: Boolean, default: false },
+    published: { type: Boolean, default: true }, // §5.19: every clinic gets a LIVE site (owner can unpublish)
     template: { type: String, enum: TEMPLATES, default: 'clean-clinical' },
     theme: { type: themeSchema, default: () => ({}) },
     content: { type: contentSchema, default: () => ({}) },

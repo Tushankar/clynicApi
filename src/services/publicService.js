@@ -40,7 +40,7 @@ async function getPublicClinic(slug) {
     clinic: {
       name: clinic.name,
       slug: clinic.slug,
-      logoUrl: clinic.logoUrl,
+      logoUrl: /^https?:\/\//i.test(clinic.logoUrl || '') ? clinic.logoUrl : '', // http(s) only — no data:/javascript:
       address: clinic.address,
       phone: clinic.phone,
       about: clinic.publicPageContent?.about || null,

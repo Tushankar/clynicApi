@@ -38,7 +38,7 @@ function buildSite(clinic, doctors) {
   const c = w.content || {};
   const t = w.theme || {};
   const hero = c.hero || {};
-  const logoUrl = t.logoUrl || clinic.logoUrl || '';
+  const logoUrl = imageUrl(t.logoUrl) || imageUrl(clinic.logoUrl) || ''; // http(s) only — no data:/javascript:
   return {
     clinic: { name: clinic.name, slug: clinic.slug, phone: clinic.phone || '', address: clinic.address || '' },
     template: TEMPLATES.includes(w.template) ? w.template : 'clean-clinical',
