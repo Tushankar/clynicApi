@@ -36,6 +36,14 @@ if (AI_DRIVER === 'mock' && !isLocalEnv) {
   throw new Error(`[env] AI_DRIVER='mock' is only permitted when NODE_ENV is development/test (got '${NODE_ENV}').`);
 }
 
+// WhatsApp channel driver (§10.5, step 8). Optional + non-load-bearing (email remains the
+// primary reminder channel), so it defaults to 'mock' everywhere; set 'cloud' + credentials
+// to use the official WhatsApp Business Cloud API. Plan-gated as WHATSAPP_REMINDERS (Std/Prem).
+const WHATSAPP_DRIVER = (process.env.WHATSAPP_DRIVER || 'mock').toLowerCase().trim();
+if (!['mock', 'cloud'].includes(WHATSAPP_DRIVER)) {
+  throw new Error(`[env] WHATSAPP_DRIVER must be 'mock' or 'cloud' (got '${process.env.WHATSAPP_DRIVER}').`);
+}
+
 // Hard safety rail (hard rule 4 — RBAC integrity): the dev auth header bypass
 // must never be reachable in any remote/shared environment. FAIL CLOSED — allow
 // it ONLY for explicitly-local env labels. Anything else (production, staging,
@@ -124,6 +132,14 @@ const config = Object.freeze({
     webhookSecret: PAYMENTS_DRIVER === 'razorpay' ? required('RAZORPAY_WEBHOOK_SECRET') : 'whsec_mock_dev',
   },
 
+  // WhatsApp Business Cloud API (§10.5). 'mock' logs; 'cloud' sends via the Graph API.
+  whatsapp: {
+    driver: WHATSAPP_DRIVER,
+    token: WHATSAPP_DRIVER === 'cloud' ? required('WHATSAPP_TOKEN') : '',
+    phoneId: WHATSAPP_DRIVER === 'cloud' ? required('WHATSAPP_PHONE_ID') : '',
+    apiVersion: process.env.WHATSAPP_API_VERSION || 'v21.0',
+  },
+
   // AI assistant (§5.10, hard rule 2 — NEVER diagnoses). The guardrail (disclaimer on every
   // output + diagnosis/advice blocker) and the doctor-approval workflow are enforced in code,
   // independent of the driver. 'mock' is a safe deterministic local model; 'anthropic' is real.
@@ -131,6 +147,15 @@ const config = Object.freeze({
     driver: AI_DRIVER,
     apiKey: AI_DRIVER === 'anthropic' ? required('ANTHROPIC_API_KEY') : '',
     model: process.env.AI_MODEL || 'claude-sonnet-5',
+  },
+
+  // Custom domains (§5.19 / step 7, infra-heavy). Domain→clinic RESOLUTION + verification
+  // are built here; the DNS CNAME + per-domain SSL (ACME) are MANUAL infra done at the
+  // ingress/proxy. 'mock' verification (dev) marks a domain verified without a live DNS
+  // lookup; 'dns' performs a real TXT check. cnameTarget is what clinics point their domain to.
+  domains: {
+    verifyDriver: (process.env.DOMAIN_VERIFY_DRIVER || (isLocalEnv ? 'mock' : 'dns')).toLowerCase().trim(),
+    cnameTarget: process.env.DOMAIN_CNAME_TARGET || 'ingress.clinic-os.app',
   },
 
   // Platform owner(s) — the only identities allowed cross-clinic super-admin analytics.

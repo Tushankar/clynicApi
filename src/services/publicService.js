@@ -12,7 +12,9 @@ const queueService = require('./queueService');
 const branchService = require('./branchService');
 const prepaymentService = require('./prepaymentService');
 const paymentService = require('./paymentService');
+const aiService = require('./aiService');
 const gateway = require('../lib/payments');
+const { planHasFeature } = require('../config/plans');
 const config = require('../config/env');
 const AppError = require('../utils/AppError');
 
@@ -42,6 +44,7 @@ async function getPublicClinic(slug) {
       address: clinic.address,
       phone: clinic.phone,
       about: clinic.publicPageContent?.about || null,
+      ai: planHasFeature(clinic.subscriptionPlan, 'AI_FEATURES'), // gates the patient-facing AI widgets
     },
     doctors: doctors.map((d) => ({
       id: String(d._id),
@@ -147,6 +150,38 @@ async function getPublicQueue(slug, branchId) {
   return { clinicId: clinic.clinicId, branchId: String(bId), clinicName: clinic.name, snapshot };
 }
 
+// ---- Public AI (patient-facing; rule 2 enforced in aiService/guard) ----
+// Gated by the clinic's plan (AI_FEATURES). If not enabled, the feature is simply absent
+// to the public (404) — patients never see staff-facing "upgrade" prompts.
+function assertAiEnabled(clinic) {
+  if (!planHasFeature(clinic.subscriptionPlan, 'AI_FEATURES')) throw new AppError(404, 'Not available');
+}
+
+async function publicFaq(slug, question) {
+  const clinic = await resolveClinic(slug);
+  assertAiEnabled(clinic);
+  return aiService.faq(publicCtx(clinic), clinic, question);
+}
+
+async function publicSymptomIntake(slug, { appointmentId, symptomsText }) {
+  const clinic = await resolveClinic(slug);
+  assertAiEnabled(clinic);
+  const ctx = publicCtx(clinic);
+  // Derive the patient from THIS clinic's appointment — a public caller can't target
+  // an arbitrary patientId (tenant isolation, hard rule 1).
+  const appt = await tenantRepo(Appointment, ctx).findById(appointmentId);
+  if (!appt) throw new AppError(404, 'Appointment not found');
+  return aiService.symptomIntake(ctx, { patientId: appt.patientId, appointmentId: appt._id, symptomsText });
+}
+
+// Voice receptionist turn (step 9). Gated by the clinic's AI plan. Lazy-require avoids a
+// module cycle (voiceService itself uses publicService for slot lookups).
+async function publicVoiceTurn(slug, { sessionId, text, callerPhone }) {
+  const clinic = await resolveClinic(slug);
+  assertAiEnabled(clinic);
+  return require('./voiceService').handleTurn(clinic, { sessionId, text, callerPhone });
+}
+
 module.exports = {
   getPublicClinic,
   getPublicSlots,
@@ -157,4 +192,7 @@ module.exports = {
   prepaymentOrder,
   prepaymentVerify,
   prepaymentMockSign,
+  publicFaq,
+  publicSymptomIntake,
+  publicVoiceTurn,
 };

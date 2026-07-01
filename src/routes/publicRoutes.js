@@ -32,5 +32,11 @@ router.post('/c/:slug/book', writeLimiter, ctrl.book);
 router.post('/c/:slug/appointments/:appointmentId/pay-order', writeLimiter, ctrl.prepayOrder);
 router.post('/c/:slug/payments/verify', writeLimiter, ctrl.prepayVerify);
 router.post('/c/:slug/payments/mock-sign', writeLimiter, ctrl.prepayMockSign); // dev only
+// Patient-facing AI (gated by the clinic's plan). Rule 2: logistics FAQ + symptom collection
+// only — never diagnosis/advice (enforced in aiService/guard). Rate-limited like other writes.
+router.post('/c/:slug/ai/faq', writeLimiter, ctrl.aiFaq);
+router.post('/c/:slug/ai/symptom-intake', writeLimiter, ctrl.aiSymptomIntake);
+// Voice receptionist turn (telephony provider webhook target). Rule 2 enforced in voiceService.
+router.post('/c/:slug/voice', writeLimiter, ctrl.voiceTurn);
 
 module.exports = router;

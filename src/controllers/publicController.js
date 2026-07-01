@@ -37,4 +37,17 @@ const prepayMockSign = asyncHandler(async (req, res) => {
   res.json(await publicService.prepaymentMockSign(req.params.slug, { orderId: req.body.orderId, paymentId: req.body.paymentId }));
 });
 
-module.exports = { getClinic, slots, requestOtp, verifyOtp, book, queue, prepayOrder, prepayVerify, prepayMockSign };
+const aiFaq = asyncHandler(async (req, res) => {
+  res.json(await publicService.publicFaq(req.params.slug, req.body.question));
+});
+const aiSymptomIntake = asyncHandler(async (req, res) => {
+  res.status(201).json(await publicService.publicSymptomIntake(req.params.slug, { appointmentId: req.body.appointmentId, symptomsText: req.body.symptomsText }));
+});
+
+// Voice receptionist webhook: one dialog turn. A telephony provider (Twilio/Exotel) posts the
+// transcribed utterance + call id here and speaks back the returned `say` (see infra doc).
+const voiceTurn = asyncHandler(async (req, res) => {
+  res.json(await publicService.publicVoiceTurn(req.params.slug, { sessionId: req.body.sessionId, text: req.body.text, callerPhone: req.body.callerPhone }));
+});
+
+module.exports = { getClinic, slots, requestOtp, verifyOtp, book, queue, prepayOrder, prepayVerify, prepayMockSign, aiFaq, aiSymptomIntake, voiceTurn };

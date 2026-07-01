@@ -1,8 +1,10 @@
 'use strict';
 
-const { Reminder } = require('../models');
+const { Reminder, Clinic } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 const { sendNotification } = require('./notifications');
+const { planHasFeature } = require('../config/plans');
+const config = require('../config/env');
 const { addMinutes } = require('../lib/datetime');
 
 /**
@@ -54,7 +56,18 @@ function buildMessage({ patientName, doctorName, scheduledAt }) {
  * Email-only in Phase 1; skipped if the patient has no email or the time has passed.
  */
 async function scheduleAppointmentReminders(ctx, { appointment, patient, now = new Date() }) {
-  const to = patient?.email;
+  // Channel is PLAN-GATED (§6.5 / 10.5): WhatsApp (Std/Prem) is used only when the clinic is
+  // ENTITLED, the WhatsApp channel is actually CONFIGURED (cloud driver — never route to an
+  // unconfigured mock in prod), and the patient has a phone. Otherwise email. WhatsApp is
+  // never load-bearing — email is the graceful fallback. clinicId comes from ctx (tenant-scoped).
+  const clinic = await Clinic.findOne({ clinicId: ctx.clinicId }).lean();
+  const whatsappAvailable = planHasFeature(clinic?.subscriptionPlan, 'WHATSAPP_REMINDERS') && config.whatsapp.driver === 'cloud';
+  let channel = 'email';
+  let to = patient?.email || null;
+  if (whatsappAvailable && patient?.phone) {
+    channel = 'whatsapp';
+    to = patient.phone;
+  }
   if (!to) return [];
 
   const { subject, message } = buildMessage({
@@ -76,7 +89,7 @@ async function scheduleAppointmentReminders(ctx, { appointment, patient, now = n
     if (existing && existing.status === 'sent') continue;
 
     const update = {
-      $set: { clinicId: ctx.clinicId, patientId: appointment.patientId, channel: 'email', sendAt, status: 'scheduled', payload: { to, subject, message }, error: null, sentAt: null },
+      $set: { clinicId: ctx.clinicId, patientId: appointment.patientId, channel, sendAt, status: 'scheduled', payload: { to, subject, message }, error: null, sentAt: null },
     };
     let reminder;
     try {

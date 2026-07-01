@@ -26,4 +26,7 @@ module.exports = {
   Payment: require('./Payment'),
   Subscription: require('./Subscription'),
   WebhookEvent: require('./WebhookEvent'),
+  AiDraft: require('./AiDraft'),
+  ClinicDomain: require('./ClinicDomain'),
+  VoiceSession: require('./VoiceSession'),
 };
