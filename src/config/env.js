@@ -84,6 +84,14 @@ const config = Object.freeze({
     .map((s) => s.trim())
     .filter(Boolean),
   mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/clinic-os',
+  // Optional DNS override for Node's resolver. Some Windows/managed networks leave Node's
+  // c-ares resolver unable to reach the system DNS (SRV lookups fail with ECONNREFUSED, which
+  // breaks mongodb+srv:// Atlas URIs) even though the OS resolves fine. Set DNS_SERVERS to
+  // public resolvers to fix it. No-op when unset.
+  dnsServers: (process.env.DNS_SERVERS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
   clerk: {
     secretKey: clerkKey('CLERK_SECRET_KEY'),
     publishableKey: clerkKey('CLERK_PUBLISHABLE_KEY'),
@@ -162,14 +170,11 @@ const config = Object.freeze({
     model: process.env.AI_MODEL || 'claude-sonnet-5',
   },
 
-  // Custom domains (§5.19 / step 7, infra-heavy). Domain→clinic RESOLUTION + verification
-  // are built here; the DNS CNAME + per-domain SSL (ACME) are MANUAL infra done at the
-  // ingress/proxy. 'mock' verification (dev) marks a domain verified without a live DNS
-  // lookup; 'dns' performs a real TXT check. cnameTarget is what clinics point their domain to.
-  domains: {
-    verifyDriver: (process.env.DOMAIN_VERIFY_DRIVER || (isLocalEnv ? 'mock' : 'dns')).toLowerCase().trim(),
-    cnameTarget: process.env.DOMAIN_CNAME_TARGET || 'ingress.clinic-os.app',
-  },
+  // Public clinic websites (§5.19 / 8.6) — platform-hosted only, NO custom domains. Sites are
+  // served at <slug>.PLATFORM_DOMAIN or PLATFORM_DOMAIN/c/<slug>; the request Host/slug resolves
+  // to a clinicId. Locally use the /c/<slug> path form on the frontend origin.
+  platformDomain: (process.env.PLATFORM_DOMAIN || 'localhost').toLowerCase().trim(),
+  publicSiteBaseUrl: process.env.PUBLIC_SITE_BASE_URL || process.env.CLIENT_URL || 'http://localhost:5173',
 
   // Platform owner(s) — the only identities allowed cross-clinic super-admin analytics.
   superAdminIds: (process.env.SUPER_ADMIN_IDS || '')

@@ -1,7 +1,20 @@
 'use strict';
 
+const dns = require('dns');
 const mongoose = require('mongoose');
 const config = require('./env');
+
+// Point Node's resolver at explicit DNS servers when configured (DNS_SERVERS). Fixes
+// mongodb+srv:// on networks where Node's c-ares can't reach the system DNS (ECONNREFUSED)
+// even though the OS resolves fine. No-op when DNS_SERVERS is unset.
+if (config.dnsServers.length) {
+  try {
+    dns.setServers(config.dnsServers);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[db] could not apply DNS_SERVERS override:', err.message);
+  }
+}
 
 /**
  * Mongoose connection management.

@@ -35,13 +35,54 @@ function resolveIdentity(req) {
     clinicId: auth.orgId || null, // active organization === clinic
     role: normalizeRole(auth.orgRole),
     userId: auth.userId || null,
+    orgSlug: auth.orgSlug || null, // used to name/slug the clinic on first provision
     source: 'clerk',
   };
 }
 
+function prettify(slug) {
+  return String(slug || '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
+/**
+ * Just-in-time clinic provisioning. A clinic maps to a Clerk Organization (§3), but creating
+ * the org in Clerk does not create the `clinics` row (that would normally arrive via a Clerk
+ * webhook). So the first authenticated request for an org with no clinic row creates one here
+ * (Basic plan) — the app is usable immediately, and the owner can edit details later. Idempotent
+ * + race-safe (unique clinicId): concurrent first requests converge on one row.
+ */
+async function ensureClinic(clinicId, hints = {}) {
+  const existing = await Clinic.findOne({ clinicId }).lean();
+  if (existing) return existing;
+
+  const name = prettify(hints.slug) || 'My Clinic';
+  const base = (hints.slug || `clinic-${clinicId}`)
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'clinic';
+  const create = async (slug) => (await Clinic.create({ clinicId, name, slug, subscriptionPlan: 'basic' })).toObject();
+  try {
+    return await create(base);
+  } catch (err) {
+    if (err.code === 11000) {
+      // clinicId already taken (a concurrent request won) → use that row; otherwise the slug
+      // collided with another clinic → retry with a unique suffix derived from the org id.
+      const winner = await Clinic.findOne({ clinicId }).lean();
+      if (winner) return winner;
+      return create(`${base}-${String(clinicId).replace(/[^a-z0-9]/gi, '').slice(-6).toLowerCase()}`);
+    }
+    throw err;
+  }
+}
+
 async function attachAuthContext(req, res, next) {
   try {
-    const { clinicId, role, userId } = resolveIdentity(req);
+    const { clinicId, role, userId, orgSlug } = resolveIdentity(req);
 
     if (!userId) {
       throw new AppError(401, 'Not authenticated');
@@ -54,9 +95,9 @@ async function attachAuthContext(req, res, next) {
     req.ctx = { clinicId, actorId: userId, actorRole: role };
     req.auth = { userId, clinicId, role };
 
-    // Load the clinic doc so subscriptionPlan is available to requireFeature (step 8).
-    // Direct lookup is legitimate here: the auth layer resolves the tenant itself.
-    req.clinic = await Clinic.findOne({ clinicId }).lean();
+    // Load (or provision on first use) the clinic doc so subscriptionPlan is available to
+    // requireFeature (step 8). Direct lookup is legitimate here: the auth layer resolves the tenant.
+    req.clinic = await ensureClinic(clinicId, { slug: orgSlug });
 
     next();
   } catch (err) {
@@ -76,4 +117,4 @@ function requireAuth(req, res, next) {
   next();
 }
 
-module.exports = { attachAuthContext, requireAuth };
+module.exports = { attachAuthContext, requireAuth, ensureClinic };

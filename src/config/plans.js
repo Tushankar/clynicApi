@@ -34,14 +34,17 @@ const FEATURES = {
   NOTIFICATION_CENTER: ['standard', 'premium'],
   ONLINE_PREPAYMENT: ['standard', 'premium'],
   WHATSAPP_REMINDERS: ['standard', 'premium'],
+  CMS_BASIC: ['standard', 'premium'], // edit website content/theme (§5.19 / 8.6)
+
+  // All plans — every clinic gets a live public website (§5.19)
+  WEBSITE_LIVE: ['basic', 'standard', 'premium'],
 
   // Premium (Phase 4)
   CRM: ['premium'],
   MULTI_BRANCH: ['premium'],
   ANALYTICS: ['premium'],
   AI_FEATURES: ['premium'],
-  WEBSITE_BUILDER: ['premium'],
-  CUSTOM_DOMAIN: ['premium'],
+  CMS_ADVANCED: ['premium'], // custom pages, blog, reviews, SEO, richer theme (§5.19 / 8.6)
 };
 
 // Numeric limits per plan (enforce separately from feature flags).

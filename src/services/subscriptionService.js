@@ -29,7 +29,11 @@ async function applySubscription(clinicId, plan, status, extra = {}) {
 
   const clinicBefore = await Clinic.findOne({ clinicId }).lean();
   await Clinic.updateOne({ clinicId }, { $set: { subscriptionPlan: plan } }); // ← the loop
-  await audit(clinicId, 'Clinic', clinicBefore?._id, { subscriptionPlan: clinicBefore?.subscriptionPlan }, { subscriptionPlan: plan, status });
+  // Only audit the Clinic entity if a clinic row exists (entityId is required). A subscription
+  // change for an org with no clinic row still records the Subscription audit above.
+  if (clinicBefore?._id) {
+    await audit(clinicId, 'Clinic', clinicBefore._id, { subscriptionPlan: clinicBefore.subscriptionPlan }, { subscriptionPlan: plan, status });
+  }
   return { clinicId, plan, status };
 }
 

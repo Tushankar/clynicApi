@@ -29,8 +29,6 @@ const analyticsRoutes = require('./analyticsRoutes');
 const aiRoutes = require('./aiRoutes');
 const websiteRoutes = require('./websiteRoutes');
 const websiteController = require('../controllers/websiteController');
-const domainRoutes = require('./domainRoutes');
-const domainController = require('../controllers/domainController');
 
 const router = express.Router();
 
@@ -40,11 +38,10 @@ router.get('/health', (req, res) => {
 });
 // Public booking API resolves the clinic from the slug — must NOT be behind Clerk.
 router.use('/public', publicRoutes);
-// Public clinic website (website builder render) — resolved by slug, no auth.
-router.get('/public/site/:slug', websiteController.publicSite);
-// Resolve an incoming custom domain (Host header) → clinic slug, so a custom domain serves
-// the right clinic's public site. No auth (public), returns only the public slug.
-router.get('/public/resolve-domain', domainController.resolve);
+// Public clinic website (§8.6) — resolves the clinic from the Host header or ?slug= (path form),
+// returns its PUBLISHED site config/content. No auth; strictly one resolved clinic (no bleed).
+router.get('/public/site', websiteController.publicSite);
+router.get('/public/site/booking-data', websiteController.publicBookingData);
 // Signed file-bytes route — authorized by the signed token, not a Clerk session.
 router.use('/files', fileRoutes);
 // Payment webhook — public; authorized by the Razorpay signature over the raw body.
@@ -78,7 +75,6 @@ api.use('/crm', crmRoutes);
 api.use('/analytics', analyticsRoutes);
 api.use('/ai', aiRoutes);
 api.use('/website', websiteRoutes);
-api.use('/domains', domainRoutes);
 
 router.use(api);
 

@@ -16,8 +16,8 @@ async function start() {
   // Socket.IO for the live queue / TV display.
   initIo(server);
 
-  // Reminders: BullMQ worker when Redis is configured; otherwise a fallback poller.
-  const jobs = reminderQueue.init();
+  // Reminders: BullMQ worker when Redis is configured + reachable; otherwise a fallback poller.
+  const jobs = await reminderQueue.init();
   if (!jobs.enabled) reminderQueue.startFallbackPoller();
 
   server.listen(config.port, () => {
