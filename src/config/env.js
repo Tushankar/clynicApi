@@ -27,10 +27,11 @@ if (PAYMENTS_DRIVER === 'mock' && !isLocalEnv) {
 
 // AI driver — fail closed (hard rule 2 lives ABOVE the driver: the guardrail + doctor-approval
 // workflow apply regardless). 'mock' = a deterministic, rule-2-safe local model for dev/test;
-// 'anthropic' = a real LLM (requires a key). 'mock' is FORBIDDEN outside development/test.
+// 'groq' = Groq (OpenAI-compatible, e.g. gpt-oss-120b); 'anthropic' = Claude. Real drivers need a key.
+// 'mock' is FORBIDDEN outside development/test.
 const AI_DRIVER = (process.env.AI_DRIVER || (isLocalEnv ? 'mock' : '')).toLowerCase().trim();
-if (!['mock', 'anthropic'].includes(AI_DRIVER)) {
-  throw new Error(`[env] AI_DRIVER must be 'mock' or 'anthropic' (got '${process.env.AI_DRIVER ?? ''}'). Set it explicitly outside development/test.`);
+if (!['mock', 'groq', 'anthropic'].includes(AI_DRIVER)) {
+  throw new Error(`[env] AI_DRIVER must be 'mock', 'groq', or 'anthropic' (got '${process.env.AI_DRIVER ?? ''}'). Set it explicitly outside development/test.`);
 }
 if (AI_DRIVER === 'mock' && !isLocalEnv) {
   throw new Error(`[env] AI_DRIVER='mock' is only permitted when NODE_ENV is development/test (got '${NODE_ENV}').`);
