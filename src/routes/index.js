@@ -26,6 +26,7 @@ const subscriptionRoutes = require('./subscriptionRoutes');
 const adminRoutes = require('./adminRoutes');
 const crmRoutes = require('./crmRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
+const dashboardRoutes = require('./dashboardRoutes');
 const aiRoutes = require('./aiRoutes');
 const websiteRoutes = require('./websiteRoutes');
 const websiteController = require('../controllers/websiteController');
@@ -54,6 +55,7 @@ const api = express.Router();
 api.use(attachAuthContext, requireAuth);
 
 api.use('/me', meRoutes);
+api.use('/dashboard', dashboardRoutes);
 api.use('/patients', patientRoutes);
 api.use('/doctors', doctorRoutes);
 api.use('/branches', branchRoutes);
