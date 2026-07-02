@@ -164,11 +164,18 @@ const config = Object.freeze({
 
   // AI assistant (§5.10, hard rule 2 — NEVER diagnoses). The guardrail (disclaimer on every
   // output + diagnosis/advice blocker) and the doctor-approval workflow are enforced in code,
-  // independent of the driver. 'mock' is a safe deterministic local model; 'anthropic' is real.
+  // independent of the driver. 'mock' is a safe deterministic local model; 'groq' (OpenAI-compatible,
+  // e.g. openai/gpt-oss-120b) and 'anthropic' (Claude) are real LLMs.
   ai: {
     driver: AI_DRIVER,
-    apiKey: AI_DRIVER === 'anthropic' ? required('ANTHROPIC_API_KEY') : '',
-    model: process.env.AI_MODEL || 'claude-sonnet-5',
+    apiKey:
+      AI_DRIVER === 'groq'
+        ? required('GROQ_API_KEY')
+        : AI_DRIVER === 'anthropic'
+        ? required('ANTHROPIC_API_KEY')
+        : '',
+    baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+    model: process.env.AI_MODEL || (AI_DRIVER === 'groq' ? 'openai/gpt-oss-120b' : 'claude-sonnet-5'),
   },
 
   // Public clinic websites (§5.19 / 8.6) — platform-hosted only, NO custom domains. Sites are
