@@ -6,6 +6,7 @@ const { connectDB, disconnectDB } = require('./config/db');
 const { createApp } = require('./app');
 const { initIo } = require('./realtime/io');
 const reminderQueue = require('./jobs/reminderQueue');
+const campaignRunner = require('./jobs/campaignRunner');
 require('./models'); // register all models once
 
 async function start() {
@@ -20,9 +21,12 @@ async function start() {
   const jobs = await reminderQueue.init();
   if (!jobs.enabled) reminderQueue.startFallbackPoller();
 
+  // CRM campaign automations (birthday / follow-up) — 10-minute tick, idempotent per day.
+  campaignRunner.start();
+
   server.listen(config.port, () => {
     // eslint-disable-next-line no-console
-    console.log(`[clinic-api] listening on :${config.port} (${config.nodeEnv}) · reminders=${jobs.mode}`);
+    console.log(`[clinic-api] listening on :${config.port} (${config.nodeEnv}) · reminders=${jobs.mode} · ai=${config.ai.driver}/${config.ai.model}`);
     if (config.devAuth) {
       // eslint-disable-next-line no-console
       console.warn('[clinic-api] DEV_AUTH is ON — identity from x-dev-* headers. Never use in production.');
@@ -43,6 +47,7 @@ async function start() {
     forceExit.unref();
     server.close(async () => {
       try {
+        campaignRunner.stop();
         await reminderQueue.close();
         await disconnectDB();
       } catch (err) {

@@ -14,6 +14,7 @@ process.env.NODE_ENV = 'development';
 process.env.DEV_AUTH = 'true';
 process.env.PAYMENTS_DRIVER = 'mock';
 process.env.WHATSAPP_DRIVER = 'baileys';
+process.env.SMTP_HOST = ''; // force the dev email sink — tests must never hit real SMTP
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,6 +32,8 @@ adapters.whatsapp.send = async ({ to, message }) => {
   sent.push({ to, message });
   return { stubbed: true, to };
 };
+// Report the channel as paired so plan-gated channel selection is exercisable.
+adapters.whatsapp.isConnected = () => true;
 
 let mongod;
 const ctx = (clinicId) => ({ clinicId, actorId: `u_${clinicId}`, actorRole: 'owner' });

@@ -1,9 +1,9 @@
 'use strict';
 
-const { Patient, Invoice } = require('../models');
+const { Patient, Invoice, Clinic } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
-const { sendNotification } = require('./notifications');
 const notificationService = require('./notificationService');
+const commsService = require('./commsService');
 const AppError = require('../utils/AppError');
 
 /**
@@ -116,24 +116,29 @@ async function segment(ctx, key, { limit = 100 } = {}, now = new Date()) {
 }
 
 /**
- * Re-engage a lapsed patient: send an email via the provider-agnostic notification
- * service + drop an in-app note. Clinic-scoped (ownership enforced by the tenant repo).
- * This is a marketing touch, never medical advice.
+ * Re-engage a lapsed patient: renders the clinic's re-engagement template (professional
+ * branded HTML email; AI-personalized on Premium) and delivers on EVERY available channel —
+ * email always, WhatsApp too when the clinic is entitled + paired and the patient has a
+ * phone. Every channel attempt is recorded in the communications log. Marketing only,
+ * never medical advice (rule 2 guard sits inside commsService).
  */
 async function reengage(ctx, patientId) {
   const patient = await repo(ctx).findById(patientId);
   if (!patient) throw new AppError(404, 'Patient not found');
-  if (!patient.email) throw new AppError(400, 'This patient has no email on file to contact.');
 
-  const clinicName = ctx.clinicName || 'your clinic';
-  await sendNotification({
-    channel: 'email',
-    to: patient.email,
-    subject: `We'd love to see you again at ${clinicName}`,
-    message: `Hi ${patient.name || 'there'}, it's been a while since your last visit. If you're due for a check-up or follow-up, we're here to help — reply or call to book a convenient time.`,
-  });
-  notificationService.emit(ctx, { type: 'other', message: `Re-engagement message sent to ${patient.name}`, link: '/crm' }).catch(() => {});
-  return { ok: true, patientId: String(patient._id), channel: 'email' };
+  const clinic = (await Clinic.findOne({ clinicId: ctx.clinicId }).lean()) || { clinicId: ctx.clinicId, name: ctx.clinicName || 'your clinic' };
+  const whatsappOk = commsService.whatsappReady(clinic, patient);
+  if (!patient.email && !whatsappOk) {
+    throw new AppError(400, 'This patient has no email on file to contact.');
+  }
+
+  const res = await commsService.sendCampaignMessage(ctx, clinic, patient, 'reengage');
+  const okChannels = res.channels.filter((c) => c.ok).map((c) => c.channel);
+  if (!okChannels.length) {
+    throw new AppError(502, `Could not deliver on any channel (${res.channels.map((c) => c.error).filter(Boolean).join('; ') || 'no channel available'})`);
+  }
+  notificationService.emit(ctx, { type: 'other', message: `Re-engagement message sent to ${patient.name}`, link: '/communications' }).catch(() => {});
+  return { ok: true, patientId: String(patient._id), channel: okChannels[0], channels: okChannels };
 }
 
 module.exports = { summary, segment, reengage };

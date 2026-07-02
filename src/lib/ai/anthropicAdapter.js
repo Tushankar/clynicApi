@@ -52,4 +52,10 @@ const structureSymptoms = ({ symptomsText }) =>
 const draftVisitSummary = ({ patient, appointment, notes, prescriptions }) =>
   complete(`Draft a visit summary FOR THE DOCTOR to review by restating ONLY the recorded data below. Add no new clinical conclusions. Patient: ${patient?.name}. Notes: ${JSON.stringify(notes?.map((n) => n.content))}. Prescriptions: ${JSON.stringify(prescriptions?.map((p) => p.items))}.`);
 
-module.exports = { driver: 'anthropic', get model() { return config.ai.model; }, SYSTEM_RULES, faqAnswer, structureSymptoms, draftVisitSummary };
+const personalizeCampaign = ({ kind, patient, clinic, baseText }) =>
+  complete(
+    `Rewrite the clinic ${kind === 'birthday' ? 'birthday greeting' : kind === 'followup' ? 'follow-up reminder' : 're-engagement'} message below so it feels warm, personal, and professional. Keep it under 90 words, keep every factual detail, marketing/logistics copy ONLY — no diagnoses, no health claims, no treatment suggestions, no markdown.\nPatient first name: ${String(patient?.name || 'there').split(' ')[0]}\nClinic: ${clinic?.name || 'the clinic'} (${clinic?.phone || ''})\n\nMessage to rewrite:\n${baseText}`,
+    { maxTokens: 400 }
+  );
+
+module.exports = { driver: 'anthropic', get model() { return config.ai.model; }, SYSTEM_RULES, faqAnswer, structureSymptoms, draftVisitSummary, personalizeCampaign };

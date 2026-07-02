@@ -28,7 +28,7 @@ function getTransporter() {
   return transporter;
 }
 
-async function send({ to, subject, message, html }) {
+async function send({ to, subject, message, html, attachments }) {
   if (!to) throw new Error('emailAdapter: missing recipient');
   const info = await getTransporter().sendMail({
     from: config.mail.from,
@@ -36,6 +36,7 @@ async function send({ to, subject, message, html }) {
     subject: subject || 'Notification',
     text: message,
     html,
+    attachments, // e.g. CID-embedded brand logo for the branded HTML shell
   });
   const record = { to, subject, messageId: info.messageId, dev: !config.mail.host, at: new Date().toISOString() };
   sentLog.push(record);

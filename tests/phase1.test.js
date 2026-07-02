@@ -15,6 +15,7 @@
 
 // Dev mode → email uses jsonTransport (no SMTP) and OTP returns a devCode.
 process.env.NODE_ENV = 'development';
+process.env.SMTP_HOST = ''; // force the dev email sink — tests must never hit real SMTP (even if .env sets it)
 
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');

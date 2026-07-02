@@ -25,5 +25,6 @@ module.exports = {
   faqAnswer: (args) => adapter.faqAnswer(args),
   structureSymptoms: (args) => adapter.structureSymptoms(args),
   draftVisitSummary: (args) => adapter.draftVisitSummary(args),
+  personalizeCampaign: (args) => adapter.personalizeCampaign(args),
   guard,
 };

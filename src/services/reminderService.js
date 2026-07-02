@@ -61,7 +61,9 @@ async function scheduleAppointmentReminders(ctx, { appointment, patient, now = n
   // channel), and the patient has a phone. Otherwise email. WhatsApp is never load-bearing —
   // email is the graceful fallback. clinicId comes from ctx (tenant-scoped).
   const clinic = await Clinic.findOne({ clinicId: ctx.clinicId }).lean();
-  const whatsappAvailable = planHasFeature(clinic?.subscriptionPlan, 'WHATSAPP_REMINDERS') && config.whatsapp.enabled;
+  const { adapters } = require('./notifications');
+  const waConnected = typeof adapters.whatsapp.isConnected === 'function' ? adapters.whatsapp.isConnected() : Boolean(config.whatsapp.enabled);
+  const whatsappAvailable = planHasFeature(clinic?.subscriptionPlan, 'WHATSAPP_REMINDERS') && config.whatsapp.enabled && waConnected;
   let channel = 'email';
   let to = patient?.email || null;
   if (whatsappAvailable && patient?.phone) {
@@ -89,7 +91,9 @@ async function scheduleAppointmentReminders(ctx, { appointment, patient, now = n
     if (existing && existing.status === 'sent') continue;
 
     const update = {
-      $set: { clinicId: ctx.clinicId, patientId: appointment.patientId, channel, sendAt, status: 'scheduled', payload: { to, subject, message }, error: null, sentAt: null },
+      // payload keeps BOTH contacts: delivery mirrors to the second channel when available
+      // (email + WhatsApp at the same time) and falls back to email if WhatsApp fails.
+      $set: { clinicId: ctx.clinicId, patientId: appointment.patientId, channel, sendAt, status: 'scheduled', payload: { to, subject, message, email: patient?.email || null, phone: patient?.phone || null }, error: null, sentAt: null },
     };
     let reminder;
     try {
@@ -118,7 +122,13 @@ async function cancelAppointmentReminders(ctx, appointmentId) {
   );
 }
 
-/** Atomically claim a reminder and deliver it once. Returns 'sent' | 'failed' | 'skipped'. */
+/**
+ * Atomically claim a reminder and deliver it once. Returns 'sent' | 'failed' | 'skipped'.
+ * Delivery is multi-channel: the stored primary channel first; then a best-effort MIRROR on
+ * the other channel when it's actually usable (email + WhatsApp at the same time, §10.5).
+ * If the primary is WhatsApp and it fails, email is the fallback — WhatsApp is never
+ * load-bearing. Every channel attempt lands in the communications log.
+ */
 async function _deliver(reminderId, now = new Date()) {
   const claimed = await Reminder.findOneAndUpdate(
     { _id: reminderId, status: 'scheduled' },
@@ -126,13 +136,52 @@ async function _deliver(reminderId, now = new Date()) {
     { new: true }
   );
   if (!claimed) return 'skipped'; // already handled — guarantees no double-send
+  const sysCtx = { clinicId: claimed.clinicId, actorId: 'system', actorRole: 'system' };
+  const template = ['appointment_24h', 'appointment_2h'].includes(claimed.type) ? claimed.type : 'custom';
+  const messageLog = require('./messageLogService');
+  const { adapters } = require('./notifications');
+  const { subject, message } = claimed.payload;
+
+  // Branded HTML shell for the email variant (best-effort — plain text always included).
+  const clinic = await Clinic.findOne({ clinicId: claimed.clinicId }).lean().catch(() => null);
+  const emailTemplates = require('../lib/comms/templates');
+  const html = clinic ? emailTemplates.wrapHtml(clinic, { title: subject, text: message }) : undefined;
+  const attachments = clinic ? await emailTemplates.emailAttachments(clinic, 'generic') : undefined;
+
+  const emailTo = claimed.channel === 'email' ? claimed.payload.to : claimed.payload.email;
+  const phoneTo = claimed.channel === 'whatsapp' ? claimed.payload.to : claimed.payload.phone;
+  const waUsable = config.whatsapp.enabled && (typeof adapters.whatsapp.isConnected !== 'function' || adapters.whatsapp.isConnected());
+
+  const sendEmail = async () => {
+    await sendNotification({ channel: 'email', to: emailTo, subject, message, html, attachments });
+    messageLog.record(sysCtx, { patientId: claimed.patientId, channel: 'email', template, subject, to: emailTo, status: 'sent' }).catch(() => {});
+  };
+  const sendWhatsapp = async () => {
+    await sendNotification({ channel: 'whatsapp', to: phoneTo, message: `${subject}\n\n${message}` });
+    messageLog.record(sysCtx, { patientId: claimed.patientId, channel: 'whatsapp', template, subject, to: phoneTo, status: 'sent' }).catch(() => {});
+  };
+
   try {
-    await sendNotification({
-      channel: claimed.channel,
-      to: claimed.payload.to,
-      subject: claimed.payload.subject,
-      message: claimed.payload.message,
-    });
+    // Primary channel (as scheduled).
+    if (claimed.channel === 'whatsapp') {
+      let emailDone = false;
+      try {
+        await sendWhatsapp();
+      } catch (waErr) {
+        // WhatsApp is never load-bearing — fall back to email when we have an address.
+        messageLog.record(sysCtx, { patientId: claimed.patientId, channel: 'whatsapp', template, subject, to: phoneTo, status: 'failed', error: waErr.message }).catch(() => {});
+        if (!emailTo) throw waErr;
+        await sendEmail();
+        emailDone = true;
+      }
+      // Mirror: patient also has an email → send it there too (kept in sync, same content).
+      if (emailTo && !emailDone) await sendEmail().catch(() => {});
+    } else {
+      await sendEmail();
+      // Mirror: WhatsApp additionally when the channel is truly usable + patient has a phone.
+      if (phoneTo && waUsable) await sendWhatsapp().catch(() => {});
+    }
+
     // In-app notification feed event (best-effort).
     require('./notificationService')
       .emit({ clinicId: claimed.clinicId, actorId: null, actorRole: null }, { type: 'reminder_sent', message: `Reminder sent to ${claimed.payload.to}`, link: '/appointments' })
@@ -140,6 +189,7 @@ async function _deliver(reminderId, now = new Date()) {
     return 'sent';
   } catch (err) {
     await Reminder.updateOne({ _id: reminderId }, { $set: { status: 'failed', error: String(err.message).slice(0, 500) } });
+    messageLog.record(sysCtx, { patientId: claimed.patientId, channel: claimed.channel, template, subject, to: claimed.payload.to, status: 'failed', error: err.message }).catch(() => {});
     return 'failed';
   }
 }

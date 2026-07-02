@@ -17,10 +17,10 @@ const adapters = {
   whatsapp: whatsappAdapter,
 };
 
-async function sendNotification({ channel = config.notify.defaultChannel, to, message, subject, html } = {}) {
+async function sendNotification({ channel = config.notify.defaultChannel, to, message, subject, html, attachments } = {}) {
   const adapter = adapters[channel];
   if (!adapter) throw new Error(`No adapter for channel: ${channel}`);
-  return adapter.send({ to, message, subject, html });
+  return adapter.send({ to, message, subject, html, attachments });
 }
 
 module.exports = { sendNotification, adapters, emailAdapter };

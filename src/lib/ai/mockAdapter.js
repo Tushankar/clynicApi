@@ -67,4 +67,19 @@ function draftVisitSummary({ patient = {}, appointment = {}, notes = [], prescri
   return lines.join('\n');
 }
 
-module.exports = { driver: 'mock', model: 'mock-clinical-1', faqAnswer, structureSymptoms, draftVisitSummary };
+/**
+ * Marketing-copy personalization for CRM campaigns (Premium). Deterministic here: adds a
+ * simple personal opener. Never medical — mirrors what the real drivers are prompted to do.
+ */
+function personalizeCampaign({ kind = 'reengage', patient = {}, clinic = {}, baseText = '' }) {
+  const name = patient.name ? patient.name.split(' ')[0] : 'there';
+  const opener =
+    kind === 'birthday'
+      ? `Happy birthday, ${name}! 🎉`
+      : kind === 'followup'
+      ? `Hi ${name}, just a friendly nudge from ${clinic.name || 'your clinic'}.`
+      : `Hi ${name}, we've missed you at ${clinic.name || 'your clinic'}.`;
+  return `${opener}\n\n${baseText}`;
+}
+
+module.exports = { driver: 'mock', model: 'mock-clinical-1', faqAnswer, structureSymptoms, draftVisitSummary, personalizeCampaign };

@@ -48,12 +48,22 @@ function getSignedUrl({ clinicId, key, ttlSeconds = config.fileUrlTtlSeconds, me
   };
 }
 
+/** Read a stored object fully into a Buffer (driver-agnostic; used to CID-inline email images). */
+async function readBuffer({ clinicId, key }) {
+  if (adapter.getBuffer) return adapter.getBuffer({ clinicId, key });
+  const stream = adapter.createReadStream({ clinicId, key });
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
 module.exports = {
   driver: adapter.driver,
   // canonical names
   saveFile: (args) => adapter.put(args),
   deleteFile: (args) => adapter.remove(args),
   createReadStream: (args) => adapter.createReadStream(args),
+  readBuffer,
   getSignedUrl,
   // back-compat aliases (existing callers)
   put: (args) => adapter.put(args),

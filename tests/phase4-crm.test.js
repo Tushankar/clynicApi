@@ -9,6 +9,7 @@
 process.env.NODE_ENV = 'development';
 process.env.DEV_AUTH = 'true';
 process.env.PAYMENTS_DRIVER = 'mock';
+process.env.SMTP_HOST = ''; // force the dev email sink — tests must never hit real SMTP
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -53,13 +54,37 @@ after(async () => {
   if (mongod) await mongod.stop();
 });
 
-test('(b) CRM is Premium-gated: Standard 403, Premium 200', async () => {
-  const blocked = await fetch(`${base}/api/crm/summary`, { headers: hdr('org_std') });
+test('(b) CRM gating: Basic 403; Standard 200 but template editing 403; Premium edits 200', async () => {
+  await Clinic.create({ clinicId: 'org_basic_crm', name: 'Basic', slug: 'basic4crm', subscriptionPlan: 'basic' });
+  const blocked = await fetch(`${base}/api/crm/summary`, { headers: hdr('org_basic_crm') });
   assert.equal(blocked.status, 403);
   assert.equal((await blocked.json()).error, 'upgrade_required');
+
+  // Standard now HAS the CRM (+ automations with default templates)…
+  const stdOk = await fetch(`${base}/api/crm/summary`, { headers: hdr('org_std') });
+  assert.equal(stdOk.status, 200);
+  const stdSettings = await fetch(`${base}/api/crm/settings`, { headers: hdr('org_std') });
+  assert.equal(stdSettings.status, 200);
+  const sBody = await stdSettings.json();
+  assert.equal(sBody.entitlements.templateEditing, false, 'standard cannot edit templates');
+  assert.equal(sBody.entitlements.ai, false, 'standard has NO AI');
+
+  // …but template EDITING is Premium-only (403 upgrade_required for Standard).
+  const stdEdit = await fetch(`${base}/api/crm/templates/birthday`, { method: 'PATCH', headers: hdr('org_std'), body: JSON.stringify({ subject: 'x' }) });
+  assert.equal(stdEdit.status, 403);
+  assert.equal((await stdEdit.json()).error, 'upgrade_required');
+
+  // Premium edits fine; the effective template reflects the override.
+  const preEdit = await fetch(`${base}/api/crm/templates/birthday`, { method: 'PATCH', headers: hdr('org_crm'), body: JSON.stringify({ subject: 'Custom bday for {{patient_name}}' }) });
+  assert.equal(preEdit.status, 200);
+  const preBody = await preEdit.json();
+  const bday = preBody.templates.find((t) => t.kind === 'birthday');
+  assert.equal(bday.customized, true);
+  assert.ok(bday.subject.startsWith('Custom bday'));
+
   const ok = await fetch(`${base}/api/crm/summary`, { headers: hdr('org_crm') });
   assert.equal(ok.status, 200);
-  console.log('  ✓ (b) CRM gated: Standard 403, Premium 200');
+  console.log('  ✓ (b) CRM gating: Basic 403 · Standard 200 (no editing, no AI) · Premium edits');
 });
 
 test('(d) completing a visit maintains visitCount/lastVisitAt + auto-repeat tag', async () => {

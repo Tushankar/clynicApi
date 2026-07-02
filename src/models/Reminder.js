@@ -22,6 +22,8 @@ const reminderSchema = new mongoose.Schema(
       to: { type: String },
       subject: { type: String },
       message: { type: String },
+      email: { type: String, default: null }, // both contacts kept → dual-channel delivery
+      phone: { type: String, default: null }, //   + email fallback when WhatsApp fails
     },
     sentAt: { type: Date },
     error: { type: String },

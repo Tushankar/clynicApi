@@ -65,4 +65,15 @@ const draftVisitSummary = ({ patient, appointment, notes, prescriptions }) =>
       `Prescriptions on record: ${JSON.stringify((prescriptions || []).map((p) => p.items))}.`
   );
 
-module.exports = { driver: 'groq', get model() { return config.ai.model; }, SYSTEM_RULES, faqAnswer, structureSymptoms, draftVisitSummary };
+const personalizeCampaign = ({ kind, patient, clinic, baseText }) =>
+  complete(
+    `Rewrite the clinic ${kind === 'birthday' ? 'birthday greeting' : kind === 'followup' ? 'follow-up reminder' : 're-engagement'} message below so it feels warm, personal, and professional for this patient. ` +
+      `Keep it SHORT (under 90 words), keep every factual detail (clinic name, phone), and change nothing medical — this is marketing/logistics copy ONLY. ` +
+      `No diagnoses, no health claims, no treatment suggestions, no markdown.\n` +
+      `Patient first name: ${String(patient?.name || 'there').split(' ')[0]}\n` +
+      `Clinic: ${clinic?.name || 'the clinic'} (${clinic?.phone || ''})\n\n` +
+      `Message to rewrite:\n${baseText}`,
+    { maxTokens: 400 }
+  );
+
+module.exports = { driver: 'groq', get model() { return config.ai.model; }, SYSTEM_RULES, faqAnswer, structureSymptoms, draftVisitSummary, personalizeCampaign };

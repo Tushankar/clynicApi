@@ -14,6 +14,7 @@ process.env.NODE_ENV = 'development';
 process.env.DEV_AUTH = 'true';
 process.env.PAYMENTS_DRIVER = 'mock';
 process.env.AI_DRIVER = 'mock';
+process.env.SMTP_HOST = ''; // force the dev email sink — tests must never hit real SMTP
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');

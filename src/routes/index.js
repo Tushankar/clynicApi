@@ -28,6 +28,8 @@ const crmRoutes = require('./crmRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
 const dashboardRoutes = require('./dashboardRoutes');
 const aiRoutes = require('./aiRoutes');
+const messageLogRoutes = require('./messageLogRoutes');
+const whatsappRoutes = require('./whatsappRoutes');
 const websiteRoutes = require('./websiteRoutes');
 const websiteController = require('../controllers/websiteController');
 
@@ -74,6 +76,8 @@ api.use('/payments', paymentRoutes);
 api.use('/subscription', subscriptionRoutes);
 api.use('/admin', adminRoutes);
 api.use('/crm', crmRoutes);
+api.use('/communications', messageLogRoutes);
+api.use('/whatsapp', whatsappRoutes);
 api.use('/analytics', analyticsRoutes);
 api.use('/ai', aiRoutes);
 api.use('/website', websiteRoutes);

@@ -28,4 +28,5 @@ module.exports = {
   WebhookEvent: require('./WebhookEvent'),
   AiDraft: require('./AiDraft'),
   VoiceSession: require('./VoiceSession'),
+  MessageLog: require('./MessageLog'),
 };

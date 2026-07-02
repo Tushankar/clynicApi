@@ -59,6 +59,45 @@ const websiteSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// ---- CRM automations (§5.13) ---------------------------------------------------------
+// Owner-controlled campaign settings. Templates hold OVERRIDES only (Premium/TEMPLATE_EDITING);
+// empty string → the professional default in lib/comms/templates.js is used. AI personalization
+// is Premium-only (AI_FEATURES) and is a marketing rewrite — never medical content (rule 2).
+const campaignTemplateSchema = new mongoose.Schema(
+  {
+    subject: { type: String, trim: true, default: '' },
+    body: { type: String, trim: true, default: '' },
+    imageUrl: { type: String, trim: true, default: '' }, // '' = default image · 'none' = no image · http(s) = custom
+    imageKey: { type: String, trim: true, default: '' }, // uploaded image (private storage key) — inlined via CID
+  },
+  { _id: false }
+);
+// Editable email color theme (empty fields fall back to the professional defaults in code).
+const emailThemeSchema = new mongoose.Schema(
+  {
+    accent: { type: String, trim: true, default: '' }, // hero gradient + buttons
+    bg: { type: String, trim: true, default: '' }, // email canvas
+    heading: { type: String, trim: true, default: '' }, // headings
+    text: { type: String, trim: true, default: '' }, // body copy
+  },
+  { _id: false }
+);
+const crmSettingsSchema = new mongoose.Schema(
+  {
+    birthdayEnabled: { type: Boolean, default: false },
+    followupEnabled: { type: Boolean, default: false },
+    sendHour: { type: Number, min: 0, max: 23, default: 9 }, // local hour campaigns go out
+    aiPersonalize: { type: Boolean, default: false }, // Premium (AI_FEATURES) only
+    emailTheme: { type: emailThemeSchema, default: () => ({}) },
+    templates: {
+      birthday: { type: campaignTemplateSchema, default: () => ({}) },
+      followup: { type: campaignTemplateSchema, default: () => ({}) },
+      reengage: { type: campaignTemplateSchema, default: () => ({}) },
+    },
+  },
+  { _id: false }
+);
+
 const clinicSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -69,6 +108,7 @@ const clinicSchema = new mongoose.Schema(
     logoUrl: { type: String, trim: true },
     publicPageContent: { type: mongoose.Schema.Types.Mixed }, // legacy free-form (pre-§8.6); superseded by `website`
     website: { type: websiteSchema, default: () => ({}) }, // §8.6 public website + CMS content
+    crmSettings: { type: crmSettingsSchema, default: () => ({}) }, // CRM campaign automations
     subscriptionPlan: { type: String, enum: PLANS, default: 'basic', required: true },
   },
   { timestamps: true }

@@ -39,11 +39,17 @@ const FEATURES = {
   // All plans — every clinic gets a live public website (§5.19)
   WEBSITE_LIVE: ['basic', 'standard', 'premium'],
 
+  // CRM & retention: Standard gets the CRM + automated campaigns (birthday wishes,
+  // follow-up reminders) with the professional DEFAULT templates. Editing those
+  // templates and AI-personalized campaign text are Premium-only.
+  CRM: ['standard', 'premium'],
+  CRM_AUTOMATION: ['standard', 'premium'],
+  TEMPLATE_EDITING: ['premium'],
+
   // Premium (Phase 4)
-  CRM: ['premium'],
   MULTI_BRANCH: ['premium'],
   ANALYTICS: ['premium'],
-  AI_FEATURES: ['premium'],
+  AI_FEATURES: ['premium'], // AI is NOT in Standard — Premium only
   CMS_ADVANCED: ['premium'], // custom pages, blog, reviews, SEO, richer theme (§5.19 / 8.6)
 };
 

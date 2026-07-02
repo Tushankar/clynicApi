@@ -10,11 +10,26 @@ const config = require('../../config/env');
  * ToS); numbers doing automated messaging can be banned. It is OPTIONAL and NON-LOAD-BEARING —
  * email is always the default/fallback channel. Enable with WHATSAPP_DRIVER=baileys.
  *
- * @whiskeysockets/baileys is LAZY-required so a box without it (or with WHATSAPP_DRIVER=none)
- * never loads it. First run prints a QR code in the API logs to pair the device; the session is
- * persisted under BAILEYS_SESSION_DIR (gitignored) so later boots reconnect without re-pairing.
+ * Pairing: the owner opens CRM → WhatsApp → Connect; we start a socket, surface the QR
+ * (via getStatus().qr) for the UI to render, and persist the session under
+ * BAILEYS_SESSION_DIR so later boots reconnect without re-pairing.
+ *
+ * @whiskeysockets/baileys is LAZY-required so a box with WHATSAPP_DRIVER=none never loads it.
  */
 let sockPromise = null;
+
+// Live connection state for the UI (CRM channel card).
+const state = {
+  status: 'disconnected', // disconnected | connecting | qr | connected
+  qr: null, // latest QR string while pairing
+  me: null, // connected WhatsApp id (number) once open
+  lastError: null,
+};
+
+function getStatus() {
+  if (!config.whatsapp.enabled) return { enabled: false, status: 'disabled', qr: null, me: null };
+  return { enabled: true, status: state.status, qr: state.qr, me: state.me, lastError: state.lastError };
+}
 
 async function getSocket() {
   if (sockPromise) return sockPromise;
@@ -24,25 +39,65 @@ async function getSocket() {
     const makeWASocket = baileys.default || baileys.makeWASocket;
     const { useMultiFileAuthState, DisconnectReason } = baileys;
 
-    const { state, saveCreds } = await useMultiFileAuthState(config.whatsapp.baileysSessionDir);
-    const sock = makeWASocket({ auth: state, printQRInTerminal: true });
+    state.status = 'connecting';
+    state.lastError = null;
+    const { state: authState, saveCreds } = await useMultiFileAuthState(config.whatsapp.baileysSessionDir);
+    const sock = makeWASocket({ auth: authState });
     sock.ev.on('creds.update', saveCreds);
     sock.ev.on('connection.update', (u) => {
-      const { connection, lastDisconnect } = u;
-      if (connection === 'close') {
-        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason?.loggedOut;
-        sockPromise = null; // allow a fresh connect on next send
-        if (!config.isProd) console.log(`[whatsapp:baileys] connection closed${shouldReconnect ? ' — will reconnect on next send' : ' (logged out — delete the session dir and re-pair)'}`);
-      } else if (connection === 'open' && !config.isProd) {
-        console.log('[whatsapp:baileys] connected');
+      const { connection, lastDisconnect, qr } = u;
+      if (qr) {
+        state.status = 'qr';
+        state.qr = qr;
+        if (!config.isProd) console.log('[whatsapp:baileys] QR ready — scan from the CRM page (WhatsApp → Connect)');
+      }
+      if (connection === 'open') {
+        state.status = 'connected';
+        state.qr = null;
+        state.me = sock.user?.id?.split(':')[0] || sock.user?.id || null;
+        if (!config.isProd) console.log(`[whatsapp:baileys] connected as ${state.me}`);
+      } else if (connection === 'close') {
+        const loggedOut = lastDisconnect?.error?.output?.statusCode === DisconnectReason?.loggedOut;
+        state.status = 'disconnected';
+        state.qr = null;
+        state.lastError = loggedOut ? 'Logged out — reconnect and scan the QR again.' : String(lastDisconnect?.error?.message || 'connection closed');
+        if (loggedOut) state.me = null;
+        sockPromise = null; // allow a fresh connect on next send/pairing
+        if (!config.isProd) console.log(`[whatsapp:baileys] connection closed${loggedOut ? ' (logged out — re-pair from the CRM page)' : ' — will reconnect on next use'}`);
       }
     });
     return sock;
   })().catch((err) => {
     sockPromise = null;
+    state.status = 'disconnected';
+    state.lastError = String(err.message || err);
     throw err;
   });
   return sockPromise;
+}
+
+/** Kick off (or reuse) a connection so the UI can poll for the QR / connected state. */
+async function startPairing() {
+  if (!config.whatsapp.enabled) throw new Error('WhatsApp channel is not enabled (set WHATSAPP_DRIVER=baileys).');
+  getSocket().catch(() => {}); // fire-and-forget; the UI polls getStatus()
+  return getStatus();
+}
+
+/** Log the number out and clear in-memory state so a different number can be paired. */
+async function logout() {
+  if (sockPromise) {
+    try {
+      const sock = await sockPromise;
+      await sock.logout().catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
+  sockPromise = null;
+  state.status = 'disconnected';
+  state.qr = null;
+  state.me = null;
+  return getStatus();
 }
 
 function toJid(to) {
@@ -61,4 +116,9 @@ async function send({ to, message }) {
   return sock.sendMessage(toJid(to), { text: String(message || '') });
 }
 
-module.exports = { send };
+/** True when the adapter can actually deliver right now (paired + open). */
+function isConnected() {
+  return config.whatsapp.enabled && state.status === 'connected';
+}
+
+module.exports = { send, getStatus, startPairing, logout, isConnected };
