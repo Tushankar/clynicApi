@@ -13,7 +13,7 @@ const auditLogSchema = new mongoose.Schema(
   {
     actorId: { type: String, default: null }, // Clerk user id of who did it (null = system)
     actorRole: { type: String, default: null },
-    action: { type: String, enum: ['create', 'update', 'delete', 'read'], required: true },
+    action: { type: String, enum: ['create', 'update', 'delete', 'restore', 'read'], required: true },
     entityType: { type: String, required: true }, // model name, e.g. 'Patient'
     entityId: { type: mongoose.Schema.Types.Mixed, required: true },
     before: { type: mongoose.Schema.Types.Mixed }, // optional snapshot pre-change

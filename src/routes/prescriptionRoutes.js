@@ -13,6 +13,7 @@ const ALL_STAFF = ['owner', 'doctor', 'receptionist'];
 router.get('/', requireRole(...ALL_STAFF), ctrl.list);
 router.get('/:id', requireRole(...ALL_STAFF), ctrl.get);
 router.post('/', requireRole('owner', 'doctor'), ctrl.create);
+router.post('/:id/share', requireRole(...ALL_STAFF), requireFeature('DOCUMENT_SHARING'), ctrl.share);
 router.delete('/:id', requireRole('owner', 'doctor'), ctrl.remove);
 
 module.exports = router;

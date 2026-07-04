@@ -33,7 +33,9 @@ before(async () => {
   await Promise.all([Clinic.init(), Doctor.init()]);
   // Two fully-distinct clinics for the isolation test.
   await Clinic.create({ clinicId: 'org_alpha', name: 'Alpha Dental', slug: 'alpha-dental', subscriptionPlan: 'premium', phone: '111', address: 'Alpha St', website: { published: true, template: 'modern-specialist', content: { hero: { headline: 'Alpha Dental — Perfect Smiles' }, about: 'Alpha about text.' }, reviews: [{ name: 'A1', text: 'Great alpha', rating: 5, approved: true }, { name: 'A2', text: 'hidden', rating: 4, approved: false }] } });
-  await Clinic.create({ clinicId: 'org_beta', name: 'Beta Care', slug: 'beta-care', subscriptionPlan: 'basic', phone: '222', address: 'Beta Rd' }); // no website content → auto-populated
+  // Published, but with NO website content → the site is auto-populated from clinic + doctors.
+  // (New clinics now default to published:false — go-live is deliberate — so tests set it explicitly.)
+  await Clinic.create({ clinicId: 'org_beta', name: 'Beta Care', slug: 'beta-care', subscriptionPlan: 'basic', phone: '222', address: 'Beta Rd', website: { published: true } });
   await new Doctor({ clinicId: 'org_alpha', name: 'Dr Alpha', specialization: 'Dentist', isActive: true }).save();
   await new Doctor({ clinicId: 'org_beta', name: 'Dr Beta', specialization: 'Pediatrics', isActive: true }).save();
   // Plan-gating clinics.

@@ -30,4 +30,8 @@ const skip = asyncHandler(async (req, res) => {
   res.json(await queueService.skip(req.ctx, req.params.id));
 });
 
-module.exports = { get, callNext, complete, skip };
+const reQueue = asyncHandler(async (req, res) => {
+  res.json(await queueService.reQueue(req.ctx, req.params.id));
+});
+
+module.exports = { get, callNext, complete, skip, reQueue };

@@ -29,4 +29,8 @@ module.exports = {
   AiDraft: require('./AiDraft'),
   VoiceSession: require('./VoiceSession'),
   MessageLog: require('./MessageLog'),
+  AvailabilityBlock: require('./AvailabilityBlock'),
+  WaitlistEntry: require('./WaitlistEntry'),
+  Recall: require('./Recall'),
+  Expense: require('./Expense'),
 };

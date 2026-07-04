@@ -42,12 +42,16 @@ function formatWhen(date) {
   }
 }
 
-function buildMessage({ patientName, doctorName, scheduledAt }) {
+function buildMessage({ patientName, doctorName, scheduledAt, manageUrl }) {
   const when = formatWhen(scheduledAt);
   const dr = doctorName || 'your doctor';
   return {
     subject: `Appointment reminder — ${dr}`,
-    message: `Hi ${patientName || 'there'}, this is a reminder of your appointment with ${dr} on ${when}. Please reply to confirm or reschedule.`,
+    message:
+      `Hi ${patientName || 'there'}, this is a reminder of your appointment with ${dr} on ${when}.` +
+      (manageUrl
+        ? `\n\nNeed to change it? Reschedule or cancel online (up to 2 hours before):\n${manageUrl}`
+        : ' Please reply to confirm or reschedule.'),
   };
 }
 
@@ -72,10 +76,16 @@ async function scheduleAppointmentReminders(ctx, { appointment, patient, now = n
   }
   if (!to) return [];
 
+  // Self-service manage link (§5.20) — minted once, reused by both reminders.
+  const manageUrl = planHasFeature(clinic?.subscriptionPlan, 'SELF_RESCHEDULE')
+    ? require('../lib/publicLinks').manageUrl(ctx.clinicId, appointment._id)
+    : '';
+
   const { subject, message } = buildMessage({
     patientName: patient.name,
     doctorName: appointment.doctorName,
     scheduledAt: appointment.scheduledAt,
+    manageUrl,
   });
 
   const created = [];
@@ -122,6 +132,80 @@ async function cancelAppointmentReminders(ctx, appointmentId) {
   );
 }
 
+// How long after a completed visit the review ask goes out — long enough to feel
+// considerate, short enough that the visit is fresh.
+const REVIEW_REQUEST_DELAY_MINUTES = 120;
+
+/**
+ * Schedule the post-visit review request (§5.21) for a just-completed appointment.
+ * Rides the same Reminder machinery (unique {appointmentId, type} → idempotent;
+ * atomic claim on delivery → never double-sends). Plan- and toggle-gated; a repeat
+ * completion (or re-run) is a no-op via appointment.reviewRequestSentAt.
+ */
+async function scheduleReviewRequest(ctx, { appointment, now = new Date() }) {
+  if (!appointment || appointment.reviewRequestSentAt) return null;
+  const clinic = await Clinic.findOne({ clinicId: ctx.clinicId }).lean();
+  if (!clinic) return null;
+  if (!planHasFeature(clinic.subscriptionPlan, 'REVIEW_REQUESTS')) return null;
+  if (!clinic.crmSettings?.reviewRequestEnabled) return null;
+
+  const { Patient } = require('../models');
+  const patient = await Patient.findOne({ clinicId: ctx.clinicId, _id: appointment.patientId, deletedAt: null }).lean();
+  if (!patient || (!patient.email && !patient.phone)) return null;
+
+  const { adapters } = require('./notifications');
+  const waConnected = typeof adapters.whatsapp.isConnected === 'function' ? adapters.whatsapp.isConnected() : Boolean(config.whatsapp.enabled);
+  const whatsappAvailable = planHasFeature(clinic.subscriptionPlan, 'WHATSAPP_REMINDERS') && config.whatsapp.enabled && waConnected;
+  let channel = 'email';
+  let to = patient.email || null;
+  if (whatsappAvailable && patient.phone) {
+    channel = 'whatsapp';
+    to = patient.phone;
+  }
+  if (!to) return null;
+
+  const reviewUrl = require('../lib/publicLinks').reviewUrl(ctx.clinicId, appointment._id);
+  const dr = appointment.doctorName || 'your doctor';
+  const subject = `How was your visit to ${clinic.name}?`;
+  const message =
+    `Hi ${patient.name || 'there'}, thank you for visiting ${clinic.name} today.\n\n` +
+    `How was your visit with ${dr}? It takes 30 seconds to rate it — your feedback helps us and other patients:\n${reviewUrl}\n\n` +
+    `Warm regards,\nTeam ${clinic.name}`;
+
+  const filter = { clinicId: ctx.clinicId, appointmentId: appointment._id, type: 'review_request' };
+  const update = {
+    $set: {
+      clinicId: ctx.clinicId,
+      patientId: appointment.patientId,
+      channel,
+      sendAt: addMinutes(now, REVIEW_REQUEST_DELAY_MINUTES),
+      status: 'scheduled',
+      payload: { to, subject, message, email: patient.email || null, phone: patient.phone || null },
+      error: null,
+      sentAt: null,
+    },
+  };
+  let reminder;
+  try {
+    reminder = await Reminder.findOneAndUpdate(filter, update, { new: true, upsert: true, setDefaultsOnInsert: true });
+  } catch (err) {
+    if (err.code === 11000) reminder = await Reminder.findOne(filter);
+    else throw err;
+  }
+  if (!reminder) return null;
+
+  // Mark the ask as initiated so repeat completions don't re-open it.
+  const { Appointment } = require('../models');
+  await Appointment.updateOne({ clinicId: ctx.clinicId, _id: appointment._id }, { $set: { reviewRequestSentAt: new Date() } });
+
+  try {
+    await enqueuer(reminder);
+  } catch {
+    /* poller covers it */
+  }
+  return reminder;
+}
+
 /**
  * Atomically claim a reminder and deliver it once. Returns 'sent' | 'failed' | 'skipped'.
  * Delivery is multi-channel: the stored primary channel first; then a best-effort MIRROR on
@@ -137,7 +221,7 @@ async function _deliver(reminderId, now = new Date()) {
   );
   if (!claimed) return 'skipped'; // already handled — guarantees no double-send
   const sysCtx = { clinicId: claimed.clinicId, actorId: 'system', actorRole: 'system' };
-  const template = ['appointment_24h', 'appointment_2h'].includes(claimed.type) ? claimed.type : 'custom';
+  const template = ['appointment_24h', 'appointment_2h', 'review_request'].includes(claimed.type) ? claimed.type : 'custom';
   const messageLog = require('./messageLogService');
   const { adapters } = require('./notifications');
   const { subject, message } = claimed.payload;
@@ -190,6 +274,10 @@ async function _deliver(reminderId, now = new Date()) {
   } catch (err) {
     await Reminder.updateOne({ _id: reminderId }, { $set: { status: 'failed', error: String(err.message).slice(0, 500) } });
     messageLog.record(sysCtx, { patientId: claimed.patientId, channel: claimed.channel, template, subject, to: claimed.payload.to, status: 'failed', error: err.message }).catch(() => {});
+    // Proactively surface the failure to staff — a silently-failed reminder is a preventable no-show.
+    require('./notificationService')
+      .emit(sysCtx, { type: 'reminder_failed', message: `A reminder to ${claimed.payload.to} failed to send — the patient may not have been reminded.`, link: '/dashboard/communications' })
+      .catch(() => {});
     return 'failed';
   }
 }
@@ -226,6 +314,7 @@ module.exports = {
   REMINDER_OFFSETS,
   setEnqueuer,
   scheduleAppointmentReminders,
+  scheduleReviewRequest,
   cancelAppointmentReminders,
   processOneReminder,
   processDueReminders,

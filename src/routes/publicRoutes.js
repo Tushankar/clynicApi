@@ -39,4 +39,26 @@ router.post('/c/:slug/ai/symptom-intake', writeLimiter, ctrl.aiSymptomIntake);
 // Voice receptionist turn (telephony provider webhook target). Rule 2 enforced in voiceService.
 router.post('/c/:slug/voice', writeLimiter, ctrl.voiceTurn);
 
+// ---- Waitlist + QR self check-in (§5.21 / 5.24) — plan-gated inside the services.
+router.post('/c/:slug/waitlist', writeLimiter, ctrl.joinWaitlist);
+router.get('/c/:slug/checkin', ctrl.checkinContext);
+router.post('/c/:slug/checkin', writeLimiter, ctrl.selfCheckin);
+
+// ---- Patient self-service via tokenized links (§5.20+). The HMAC token binds
+// {type, clinic, record}; services re-check live state + plan on every call.
+router.get('/manage/:token', ctrl.manageView);
+router.get('/manage/:token/slots', ctrl.manageSlots);
+router.post('/manage/:token/reschedule', writeLimiter, ctrl.manageReschedule);
+router.post('/manage/:token/cancel', writeLimiter, ctrl.manageCancel);
+
+router.get('/pay/:token', ctrl.payView);
+router.post('/pay/:token/order', writeLimiter, ctrl.payOrder);
+router.post('/pay/:token/verify', writeLimiter, ctrl.payVerify);
+router.post('/pay/:token/mock-sign', writeLimiter, ctrl.payMockSign); // dev only
+
+router.get('/review/:token', ctrl.reviewView);
+router.post('/review/:token', writeLimiter, ctrl.reviewSubmit);
+
+router.get('/doc/:token', ctrl.docView);
+
 module.exports = router;

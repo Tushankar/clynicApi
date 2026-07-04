@@ -53,6 +53,112 @@ async function renderForPatient(clinic, patient, kind) {
  * available channels. Returns { channels: [{channel, ok}], skipped } — throws only when
  * there is NO channel at all to try.
  */
+function fmtWhen(date) {
+  try {
+    return new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(date));
+  } catch {
+    return new Date(date).toISOString();
+  }
+}
+
+/**
+ * Booking confirmation (§5.20) — sent right after an online booking or a self-service
+ * reschedule, on every available channel. Carries the ticket essentials + the tokenized
+ * manage link so the patient can reschedule/cancel without calling. Best-effort: callers
+ * fire-and-forget; a failed confirmation never fails the booking.
+ */
+async function sendBookingConfirmation(ctx, clinic, patient, appointment, { heading = 'Appointment confirmed' } = {}) {
+  const publicLinks = require('../lib/publicLinks');
+  const selfService = planHasFeature(clinic?.subscriptionPlan, 'SELF_RESCHEDULE');
+  const manageUrl = selfService ? publicLinks.manageUrl(ctx.clinicId, appointment._id) : '';
+
+  const dr = appointment.doctorName || 'your doctor';
+  const when = fmtWhen(appointment.scheduledAt);
+  const subject = `${heading} — ${dr}, ${when}`;
+  const text =
+    `Hi ${patient.name || 'there'},\n\n` +
+    `Your appointment at ${clinic?.name || 'the clinic'} is ${heading === 'Appointment confirmed' ? 'confirmed' : 'updated'}:\n\n` +
+    `Doctor: ${dr}\nWhen: ${when}` +
+    (appointment.tokenNumber != null ? `\nToken: #${appointment.tokenNumber}` : '') +
+    (clinic?.address ? `\nWhere: ${clinic.address}` : '') +
+    (manageUrl ? `\n\nNeed to change it? Reschedule or cancel online (up to 2 hours before):\n${manageUrl}` : '') +
+    `\n\nSee you soon,\nTeam ${clinic?.name || 'the clinic'}`;
+
+  const ctas = manageUrl ? [{ href: manageUrl, label: 'Manage appointment' }] : undefined;
+  const html = templates.wrapHtml(clinic, { title: heading, text, ctas });
+  const logBase = { patientId: patient._id, patientName: patient.name, template: 'booking_confirmation', subject };
+  const results = [];
+
+  if (patient.email) {
+    try {
+      await sendNotification({ channel: 'email', to: patient.email, subject, message: text, html, attachments: await templates.emailAttachments(clinic, 'generic') });
+      await messageLog.record(ctx, { ...logBase, channel: 'email', to: patient.email, status: 'sent' });
+      results.push({ channel: 'email', ok: true });
+    } catch (err) {
+      await messageLog.record(ctx, { ...logBase, channel: 'email', to: patient.email, status: 'failed', error: err.message });
+      results.push({ channel: 'email', ok: false, error: err.message });
+    }
+  }
+  if (whatsappReady(clinic, patient)) {
+    try {
+      await sendNotification({ channel: 'whatsapp', to: patient.phone, message: `${subject}\n\n${text}` });
+      await messageLog.record(ctx, { ...logBase, channel: 'whatsapp', to: patient.phone, status: 'sent' });
+      results.push({ channel: 'whatsapp', ok: true });
+    } catch (err) {
+      await messageLog.record(ctx, { ...logBase, channel: 'whatsapp', to: patient.phone, status: 'failed', error: err.message });
+      results.push({ channel: 'whatsapp', ok: false, error: err.message });
+    }
+  }
+  return { channels: results, skipped: results.length === 0, manageUrl };
+}
+
+/**
+ * Cancellation notice (§5.20) — sent to the patient when their appointment is cancelled, whether
+ * the clinic cancelled it OR the patient did via the manage link. Historically NEITHER path told
+ * the patient (and the clinic-side cancel even deleted the reminder), so patients showed up to a
+ * cancelled slot. Best-effort on every available channel; never fails the cancellation.
+ */
+async function sendCancellationNotice(ctx, clinic, patient, appointment, { reason } = {}) {
+  const dr = appointment.doctorName || 'your doctor';
+  const when = fmtWhen(appointment.scheduledAt);
+  const subject = `Appointment cancelled — ${dr}, ${when}`;
+  const rebook = clinic?.phone
+    ? `\n\nTo rebook, please call us on ${clinic.phone}.`
+    : `\n\nPlease call the clinic to rebook.`;
+  const text =
+    `Hi ${patient.name || 'there'},\n\n` +
+    `Your appointment at ${clinic?.name || 'the clinic'} has been cancelled:\n\n` +
+    `Doctor: ${dr}\nWhen: ${when}` +
+    (reason ? `\nReason: ${reason}` : '') +
+    rebook +
+    `\n\n— Team ${clinic?.name || 'the clinic'}`;
+  const html = templates.wrapHtml(clinic, { title: 'Appointment cancelled', text });
+  const logBase = { patientId: patient._id, patientName: patient.name, template: 'appointment_cancelled', subject };
+  const results = [];
+
+  if (patient.email) {
+    try {
+      await sendNotification({ channel: 'email', to: patient.email, subject, message: text, html, attachments: await templates.emailAttachments(clinic, 'generic') });
+      await messageLog.record(ctx, { ...logBase, channel: 'email', to: patient.email, status: 'sent' });
+      results.push({ channel: 'email', ok: true });
+    } catch (err) {
+      await messageLog.record(ctx, { ...logBase, channel: 'email', to: patient.email, status: 'failed', error: err.message });
+      results.push({ channel: 'email', ok: false, error: err.message });
+    }
+  }
+  if (whatsappReady(clinic, patient)) {
+    try {
+      await sendNotification({ channel: 'whatsapp', to: patient.phone, message: `${subject}\n\n${text}` });
+      await messageLog.record(ctx, { ...logBase, channel: 'whatsapp', to: patient.phone, status: 'sent' });
+      results.push({ channel: 'whatsapp', ok: true });
+    } catch (err) {
+      await messageLog.record(ctx, { ...logBase, channel: 'whatsapp', to: patient.phone, status: 'failed', error: err.message });
+      results.push({ channel: 'whatsapp', ok: false, error: err.message });
+    }
+  }
+  return { channels: results, skipped: results.length === 0 };
+}
+
 async function sendCampaignMessage(ctx, clinic, patient, kind) {
   const { subject, text, html } = await renderForPatient(clinic, patient, kind);
   const logBase = { patientId: patient._id, patientName: patient.name, template: kind, subject };
@@ -83,4 +189,4 @@ async function sendCampaignMessage(ctx, clinic, patient, kind) {
   return { channels: results, skipped: results.length === 0 };
 }
 
-module.exports = { sendCampaignMessage, renderForPatient, whatsappReady };
+module.exports = { sendCampaignMessage, sendBookingConfirmation, sendCancellationNotice, renderForPatient, whatsappReady };

@@ -34,6 +34,8 @@ const appointmentSchema = new mongoose.Schema(
 
     bookedByStaffId: { type: String, default: null }, // Clerk user id, or null for public/online
     cancelledReason: { type: String, trim: true },
+    reviewRequestSentAt: { type: Date, default: null }, // post-visit review ask (once per appointment)
+    reviewSubmittedAt: { type: Date, default: null }, // patient submitted a rating via the review link
   },
   { timestamps: true }
 );

@@ -12,4 +12,12 @@ const me = asyncHandler(async (req, res) => {
   res.json({ isSuperAdmin: true });
 });
 
-module.exports = { analytics, me };
+const clinics = asyncHandler(async (req, res) => {
+  res.json({ items: await adminService.listClinics({}) });
+});
+
+const setPlan = asyncHandler(async (req, res) => {
+  res.json(await adminService.setClinicPlan(req.params.clinicId, req.body.plan));
+});
+
+module.exports = { analytics, me, clinics, setPlan };

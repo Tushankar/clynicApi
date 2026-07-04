@@ -13,22 +13,41 @@ function repo(ctx) {
   return tenantRepo(Notification, ctx, { audit: false });
 }
 
+// Valid notification types, read from the schema so this can never drift out of sync.
+const KNOWN_TYPES = new Set(Notification.schema.path('type').enumValues);
+
 function recipientFilter(ctx) {
   return { $or: [{ recipientId: ctx.actorId }, { recipientId: null }] };
 }
 
+/**
+ * Emit an in-app notification (+ live socket push). Robust by construction: an unknown `type`
+ * is coerced to 'other' (and logged) rather than throwing enum validation — a silent-drop bug
+ * previously meant new event types (review/waitlist) never reached the bell at all. emit never
+ * throws into a caller's flow.
+ */
 async function emit(ctx, { type = 'other', message, link = null, recipientId = null, recipientType = 'staff', branchId = null }) {
   if (!message) return null;
-  const doc = await repo(ctx).create({ type, message, link, recipientId, recipientType, ...(branchId ? { branchId } : {}) });
-  realtime.emitNotification(ctx.clinicId, recipientId, {
-    _id: String(doc._id),
-    type,
-    message,
-    link,
-    read: false,
-    createdAt: doc.createdAt,
-  });
-  return doc;
+  let safeType = type;
+  if (!KNOWN_TYPES.has(type)) {
+    console.warn(`[notificationService] unknown notification type "${type}" — coerced to "other". Add it to the Notification.type enum.`);
+    safeType = 'other';
+  }
+  try {
+    const doc = await repo(ctx).create({ type: safeType, message, link, recipientId, recipientType, ...(branchId ? { branchId } : {}) });
+    realtime.emitNotification(ctx.clinicId, recipientId, {
+      _id: String(doc._id),
+      type: safeType,
+      message,
+      link,
+      read: false,
+      createdAt: doc.createdAt,
+    });
+    return doc;
+  } catch (err) {
+    console.error('[notificationService] failed to persist notification:', err?.message || err);
+    return null;
+  }
 }
 
 function list(ctx, { unreadOnly = false, limit = 30 } = {}) {

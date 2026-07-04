@@ -11,8 +11,12 @@ const { clinicScoped } = require('./plugins');
  */
 const otpChallengeSchema = new mongoose.Schema(
   {
-    email: { type: String, required: true, lowercase: true, trim: true },
-    codeHash: { type: String, required: true }, // HMAC-SHA256(clinicId:email:code) keyed by OTP_HASH_SECRET
+    // Identity is EITHER an email OR a phone (normalized last-10-digits) — so patients without an
+    // email can verify via WhatsApp/SMS. codeHash is HMAC-SHA256(clinicId:identifier:code).
+    email: { type: String, lowercase: true, trim: true, default: null },
+    phone: { type: String, trim: true, default: null },
+    channel: { type: String, enum: ['email', 'whatsapp', 'sms'], default: 'email' },
+    codeHash: { type: String, required: true },
     expiresAt: { type: Date, required: true },
     attempts: { type: Number, default: 0 },
     verifiedAt: { type: Date, default: null },
@@ -23,6 +27,7 @@ const otpChallengeSchema = new mongoose.Schema(
 
 clinicScoped(otpChallengeSchema);
 otpChallengeSchema.index({ clinicId: 1, email: 1, createdAt: -1 });
+otpChallengeSchema.index({ clinicId: 1, phone: 1, createdAt: -1 });
 // TTL: Mongo removes the doc ~when expiresAt passes (cleanup only; logic checks expiry too).
 otpChallengeSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 

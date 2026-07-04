@@ -27,10 +27,24 @@ function availabilityToObject(availability) {
   return availability;
 }
 
+/** True when [slotStart, slotEnd) overlaps any block's [startAt, endAt) window. */
+function inBlockedWindow(slotStart, slotEnd, blocks) {
+  for (const b of blocks) {
+    const bs = new Date(b.startAt).getTime();
+    const be = new Date(b.endAt).getTime();
+    if (slotStart < be && slotEnd > bs) return true;
+  }
+  return false;
+}
+
 /**
+ * @param {{ doctor, date, bookedStarts?: Date[], now?: Date, leadMinutes?: number,
+ *           blocks?: Array<{startAt: Date, endAt: Date}> }} args
+ *   blocks: availability blocks (doctor leave / clinic holidays) overlapping the day —
+ *   slots inside any block are marked unavailable (§5.20).
  * @returns {Array<{ start: string(ISO), label: string, available: boolean }>}
  */
-function generateSlots({ doctor, date, bookedStarts = [], now = new Date(), leadMinutes = 0 }) {
+function generateSlots({ doctor, date, bookedStarts = [], now = new Date(), leadMinutes = 0, blocks = [] }) {
   const avail = availabilityToObject(doctor.availability);
   const day = typeof date === 'string' ? new Date(date) : date;
   const windows = avail[DAY_KEYS[day.getDay()]] || [];
@@ -50,7 +64,7 @@ function generateSlots({ doctor, date, bookedStarts = [], now = new Date(), lead
       slots.push({
         start: slotDate.toISOString(),
         label: fmtLabel(slotDate),
-        available: cur > cutoff && !bookedSet.has(cur),
+        available: cur > cutoff && !bookedSet.has(cur) && !inBlockedWindow(cur, cur + step * 60000, blocks),
       });
       cur += step * 60000;
     }
@@ -58,4 +72,30 @@ function generateSlots({ doctor, date, bookedStarts = [], now = new Date(), lead
   return slots;
 }
 
-module.exports = { generateSlots, DAY_KEYS };
+/** True if the doctor has ANY working hours configured (used to decide whether to enforce them). */
+function hasWorkingHours(doctor) {
+  const avail = availabilityToObject(doctor && doctor.availability);
+  return DAY_KEYS.some((k) => Array.isArray(avail[k]) && avail[k].some((w) => w && w.start && w.end));
+}
+
+/**
+ * True if `when` falls at the start of one of the doctor's weekly windows for that weekday.
+ * Server-side guard so a crafted request can't book/reschedule outside the doctor's hours
+ * (the slot picker already restricts this client-side). Matches generateSlots: a time counts
+ * as valid when it is >= a window start and < that window's end.
+ */
+function isWithinWorkingHours(doctor, when) {
+  const avail = availabilityToObject(doctor && doctor.availability);
+  const d = new Date(when);
+  const windows = avail[DAY_KEYS[d.getDay()]] || [];
+  if (!windows.length) return false;
+  const mins = d.getHours() * 60 + d.getMinutes();
+  return windows.some((w) => {
+    if (!w || !w.start || !w.end) return false;
+    const s = parseHHMM(w.start);
+    const e = parseHHMM(w.end);
+    return mins >= s.h * 60 + s.m && mins < e.h * 60 + e.m;
+  });
+}
+
+module.exports = { generateSlots, inBlockedWindow, hasWorkingHours, isWithinWorkingHours, DAY_KEYS };

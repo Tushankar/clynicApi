@@ -4,7 +4,8 @@ const asyncHandler = require('../utils/asyncHandler');
 const appointmentService = require('../services/appointmentService');
 
 const list = asyncHandler(async (req, res) => {
-  const items = await appointmentService.list(req.ctx, req.query);
+  // The dashboard list carries a per-row billing summary (fee/paid/due/status).
+  const items = await appointmentService.listWithBilling(req.ctx, req.query);
   res.json({ items });
 });
 

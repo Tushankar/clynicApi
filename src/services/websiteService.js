@@ -14,7 +14,7 @@ const AppError = require('../utils/AppError');
  * clinic-scoped tenant repo (req.ctx.clinicId), so a clinic can only edit its own site.
  */
 
-const TEMPLATES = Clinic.TEMPLATES || ['clean-clinical', 'warm-family', 'modern-specialist'];
+const TEMPLATES = Clinic.TEMPLATES || ['premium-signature', 'clean-clinical', 'warm-family', 'modern-specialist'];
 const DEFAULT_PRIMARY = '#0d9488'; // calm medical teal (§8.5 tokens)
 const DEFAULT_ACCENT = '#0f766e';
 
@@ -41,7 +41,7 @@ function buildSite(clinic, doctors) {
   const logoUrl = imageUrl(t.logoUrl) || imageUrl(clinic.logoUrl) || ''; // http(s) only — no data:/javascript:
   return {
     clinic: { name: clinic.name, slug: clinic.slug, phone: clinic.phone || '', address: clinic.address || '' },
-    template: TEMPLATES.includes(w.template) ? w.template : 'clean-clinical',
+    template: TEMPLATES.includes(w.template) ? w.template : 'premium-signature',
     theme: { primaryColor: hexColor(t.primaryColor) || DEFAULT_PRIMARY, accentColor: hexColor(t.accentColor) || DEFAULT_ACCENT, logoUrl },
     content: {
       hero: {
@@ -60,7 +60,19 @@ function buildSite(clinic, doctors) {
       },
       mapEmbed: httpsUrl(c.mapEmbed),
     },
-    doctors: doctors.map((d) => ({ id: String(d._id), name: d.name, specialization: d.specialization || 'General Physician', consultationFee: d.consultationFee || 0 })),
+    doctors: doctors.map((d) => ({
+      id: String(d._id),
+      name: d.name,
+      specialization: d.specialization || 'General Physician',
+      consultationFee: d.consultationFee || 0,
+      // Public profile (trust/marketing) — all optional; the template degrades gracefully.
+      photoUrl: imageUrl(d.photoUrl),
+      qualifications: str(d.qualifications, 160),
+      experienceYears: Number(d.experienceYears) || 0,
+      bio: str(d.bio, 600),
+      services: clampArr(d.services, 12).map((s) => str(s, 60)).filter(Boolean),
+      languages: clampArr(d.languages, 8).map((s) => str(s, 40)).filter(Boolean),
+    })),
     reviews: (w.reviews || []).filter((r) => r.approved).map((r) => ({ name: str(r.name, 120) || 'Patient', text: str(r.text, 800), rating: Math.max(1, Math.min(5, Number(r.rating) || 5)) })),
     pages: (w.pages || []).filter((p) => p.published).map((p) => ({ slug: p.slug, title: str(p.title, 160), body: str(p.body, 20000) })),
     seo: {
@@ -112,7 +124,7 @@ async function getSiteConfig(ctx) {
   return {
     slug: clinic.slug,
     published: w.published !== false,
-    template: w.template || 'clean-clinical',
+    template: w.template || 'premium-signature',
     templates: TEMPLATES,
     theme: w.theme || {},
     content: w.content || {},

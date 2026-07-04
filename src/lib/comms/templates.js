@@ -407,8 +407,11 @@ function render(clinic, kind, patient, { bodyTextOverride } = {}) {
   return { subject, text, html, template: t };
 }
 
-/** Wrap arbitrary text (e.g. appointment reminders) in the same branded shell. */
-function wrapHtml(clinic, { title, text }) {
+/**
+ * Wrap arbitrary text (e.g. appointment reminders) in the same branded shell.
+ * `ctas` overrides the default Book/Call buttons (e.g. a manage or pay link).
+ */
+function wrapHtml(clinic, { title, text, ctas }) {
   const vars = { clinic_name: clinic?.name || 'your clinic' };
   const hero = HERO.generic;
   return emailShell({
@@ -416,7 +419,7 @@ function wrapHtml(clinic, { title, text }) {
     hero: { icon: hero.icon, title: hero.title(vars, title), tagline: hero.tagline(vars) },
     bodyHtml: textToParagraphs(text || ''),
     preheader: title || '',
-    ctas: defaultCtas(clinic),
+    ctas: Array.isArray(ctas) && ctas.length ? ctas : defaultCtas(clinic),
   });
 }
 

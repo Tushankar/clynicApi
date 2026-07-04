@@ -122,16 +122,9 @@ async function handleTurn(clinic, { sessionId, text = '', callerPhone = null }) 
     }
   } else if (state === 'book_name') {
     const name = String(text).trim().slice(0, 80) || 'Caller';
-    // Find or create the patient by caller phone, then book (source: phone). Rule-1 scoped.
-    let patientId;
-    if (callerPhone || session.callerPhone) {
-      const existing = await patientService.findByContact(ctx, { phone: callerPhone || session.callerPhone });
-      if (existing) patientId = existing._id;
-    }
-    if (!patientId) {
-      const created = await patientService.createPatient(ctx, { name, phone: callerPhone || session.callerPhone || undefined });
-      patientId = created._id;
-    }
+    // Find-or-create by caller phone (family-safe), then book (source: phone). Rule-1 scoped.
+    const { patient } = await patientService.findOrCreatePatient(ctx, { name, phone: callerPhone || session.callerPhone || undefined });
+    const patientId = patient._id;
     const appt = await appointmentService.book(ctx, { doctorId: collected.doctorId, patientId, scheduledAt: collected.scheduledAt, source: 'phone', reason: 'Booked via voice receptionist' });
     patch.appointmentId = appt._id;
     patch.tokenNumber = appt.tokenNumber;

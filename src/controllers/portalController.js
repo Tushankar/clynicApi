@@ -3,8 +3,8 @@
 const asyncHandler = require('../utils/asyncHandler');
 const portalService = require('../services/portalService');
 
-const requestLogin = asyncHandler(async (req, res) => res.json(await portalService.requestLogin(req.params.slug, req.body.email)));
-const verifyLogin = asyncHandler(async (req, res) => res.json(await portalService.verifyLogin(req.params.slug, req.body.email, req.body.code)));
+const requestLogin = asyncHandler(async (req, res) => res.json(await portalService.requestLogin(req.params.slug, req.body.contact || req.body.email)));
+const verifyLogin = asyncHandler(async (req, res) => res.json(await portalService.verifyLogin(req.params.slug, req.body.contact || req.body.email, req.body.code)));
 
 const me = asyncHandler(async (req, res) => res.json(await portalService.me(req)));
 const prescriptions = asyncHandler(async (req, res) => res.json({ items: await portalService.prescriptions(req) }));

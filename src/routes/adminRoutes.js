@@ -10,5 +10,7 @@ const router = express.Router();
 router.use(requireSuperAdmin);
 router.get('/me', ctrl.me);
 router.get('/analytics', ctrl.analytics);
+router.get('/clinics', ctrl.clinics); // per-clinic operational list
+router.post('/clinics/:clinicId/plan', ctrl.setPlan); // force a clinic's plan (support)
 
 module.exports = router;

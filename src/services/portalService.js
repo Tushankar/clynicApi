@@ -1,9 +1,10 @@
 'use strict';
 
-const { Clinic, Patient, Prescription, Invoice, Appointment, Report, Payment } = require('../models');
+const { Clinic, Patient, Prescription, Invoice, Appointment, Report, Payment, QueueEntry } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 const { planHasFeature } = require('../config/plans');
 const otpService = require('./otpService');
+const patientService = require('./patientService');
 const reportService = require('./reportService');
 const paymentService = require('./paymentService');
 const queueService = require('./queueService');
@@ -23,25 +24,32 @@ async function resolveClinic(slug) {
 }
 
 // ---- Auth ----
-async function requestLogin(slug, email) {
+// `contact` is an email OR a mobile number — a patient with only a phone on file can still log in
+// (code delivered via WhatsApp when the clinic has it connected).
+async function requestLogin(slug, contact) {
   const clinic = await resolveClinic(slug);
-  return otpService.requestOtp(clinic.clinicId, email);
+  return otpService.requestOtp(clinic.clinicId, contact);
 }
 
-async function verifyLogin(slug, email, code) {
+async function verifyLogin(slug, contact, code) {
   const clinic = await resolveClinic(slug);
-  await otpService.verifyOtp(clinic.clinicId, email, code); // throws on wrong/expired
-  await otpService.consumeVerified(clinic.clinicId, email); // single-use
+  await otpService.verifyOtp(clinic.clinicId, contact, code); // throws on wrong/expired
   const ctx = { clinicId: clinic.clinicId, actorId: 'portal', actorRole: null };
-  const patient = await tenantRepo(Patient, ctx).findOne({ email: String(email).toLowerCase().trim() });
-  if (!patient) throw new AppError(404, 'No records found for this email. Please book an appointment first.');
+  const c = otpService.classify(contact);
+  // Look up the patient by whichever identity they verified, BEFORE consuming the code — otherwise a
+  // correct code for a contact with no record burns the single-use OTP.
+  const patient = c && c.kind === 'email'
+    ? await tenantRepo(Patient, ctx).findOne({ email: c.identifier })
+    : await patientService.findByContact(ctx, { phone: c ? c.identifier : contact });
+  if (!patient) throw new AppError(404, 'No records found for that email or number. Please book an appointment first.');
+  await otpService.consumeVerified(clinic.clinicId, contact); // single-use — consumed only on success
   const token = patientSession.sign({
     clinicId: clinic.clinicId,
     patientId: String(patient._id),
-    email: patient.email,
+    email: patient.email || null,
     exp: Date.now() + config.patientSessionTtlHours * 3600 * 1000,
   });
-  return { token, patient: { id: String(patient._id), name: patient.name, email: patient.email } };
+  return { token, patient: { id: String(patient._id), name: patient.name, email: patient.email || null } };
 }
 
 // ---- Patient-scoped reads (req.ctx + req.patient.patientId set by patientAuth) ----
@@ -79,7 +87,24 @@ function uploadReport(req, { type, title, file }) {
 
 async function queue(req) {
   const branch = await branchService.getOrCreatePrimaryBranch(req.ctx);
-  return queueService.snapshot(req.ctx, branch._id, { display: true });
+  const snap = await queueService.snapshot(req.ctx, branch._id, { display: true });
+  // Personalize: find THIS patient's own live queue entry and their position, so the portal answers
+  // the one question they opened it for — "how long until me?" — instead of a generic lobby board.
+  const entry = await tenantRepo(QueueEntry, req.ctx, { audit: false }).findOne(
+    { patientId: req.patient.patientId, status: { $in: ['waiting', 'called', 'in_consultation'] } },
+    { lean: true }
+  );
+  let you = null;
+  if (entry) {
+    const idx = snap.waiting.findIndex((w) => w.token === entry.tokenNumber);
+    you = {
+      token: entry.tokenNumber,
+      status: entry.status,
+      position: idx >= 0 ? idx + 1 : 0, // 0 = being seen / called
+      waitMinutes: idx >= 0 ? snap.waiting[idx].waitMinutes : 0,
+    };
+  }
+  return { ...snap, you };
 }
 
 // ---- Pay an invoice from the portal ----

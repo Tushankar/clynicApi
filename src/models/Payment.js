@@ -23,7 +23,8 @@ const paymentSchema = new mongoose.Schema(
     currency: { type: String, default: 'INR' },
     // created → processing (claimed, side effect running) → paid. 'processing' is
     // re-claimable so an apply that fails after the claim is retried (payment rule 2).
-    status: { type: String, enum: ['created', 'processing', 'paid', 'failed', 'refunded'], default: 'created' },
+    // 'expired' = an abandoned checkout the reconciliation sweep closed (never captured).
+    status: { type: String, enum: ['created', 'processing', 'paid', 'failed', 'refunded', 'expired'], default: 'created' },
     signatureVerified: { type: Boolean, default: false },
     method: { type: String },
   },

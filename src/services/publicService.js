@@ -1,6 +1,6 @@
 'use strict';
 
-const { Clinic, Doctor, Appointment } = require('../models');
+const { Clinic, Doctor, Appointment, Patient } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 const { dayRange, parseDateOnly, dateKey } = require('../lib/datetime');
 const { generateSlots } = require('../lib/availability');
@@ -63,25 +63,30 @@ async function getPublicSlots(slug, { doctorId, date }) {
 
   const day = date ? parseDateOnly(date) : new Date();
   const { start, end } = dayRange(day);
-  const booked = await tenantRepo(Appointment, ctx).find(
-    { doctorId, scheduledAt: { $gte: start, $lte: end }, status: { $in: ACTIVE_STATUSES } },
-    { lean: true }
-  );
+  const [booked, blocks] = await Promise.all([
+    tenantRepo(Appointment, ctx).find(
+      { doctorId, scheduledAt: { $gte: start, $lte: end }, status: { $in: ACTIVE_STATUSES } },
+      { lean: true }
+    ),
+    require('./availabilityBlockService').blocksFor(ctx, { doctorId, from: start, to: end }),
+  ]);
   const slots = generateSlots({
     doctor,
     date: day,
     bookedStarts: booked.map((b) => b.scheduledAt),
     leadMinutes: 30, // don't offer slots starting in the next 30 minutes
+    blocks, // doctor leave / clinic holidays never surface as bookable (§5.20)
   });
-  return { date: dateKey(day), doctorId, slots };
+  // waitlistAvailable → the booking page can offer "join the waitlist" when the day is full.
+  return { date: dateKey(day), doctorId, slots, waitlistAvailable: planHasFeature(clinic.subscriptionPlan, 'WAITLIST') };
 }
 
-function requestBookingOtp(slug, email) {
-  return resolveClinic(slug).then((c) => otpService.requestOtp(c.clinicId, email));
+function requestBookingOtp(slug, contact) {
+  return resolveClinic(slug).then((c) => otpService.requestOtp(c.clinicId, contact));
 }
 
-function verifyBookingOtp(slug, email, code) {
-  return resolveClinic(slug).then((c) => otpService.verifyOtp(c.clinicId, email, code));
+function verifyBookingOtp(slug, contact, code) {
+  return resolveClinic(slug).then((c) => otpService.verifyOtp(c.clinicId, contact, code));
 }
 
 async function publicBook(slug, payload) {
@@ -89,21 +94,19 @@ async function publicBook(slug, payload) {
   const ctx = publicCtx(clinic);
   const { name, phone, email, doctorId, scheduledAt, reason } = payload;
   if (!name) throw new AppError(400, 'Your name is required');
-  if (!email) throw new AppError(400, 'Email is required');
+  // Contact = email OR mobile — a patient without an email can verify by phone (WhatsApp/SMS).
+  const contact = email || phone;
+  if (!contact) throw new AppError(400, 'An email or mobile number is required');
 
-  // Email ownership must be proven first.
-  const verified = await otpService.consumeVerified(clinic.clinicId, email);
-  if (!verified) throw new AppError(401, 'Please verify your email before booking');
+  // Contact ownership must be proven first (the verified identity is what was OTP-checked).
+  const verified = await otpService.consumeVerified(clinic.clinicId, contact);
+  if (!verified) throw new AppError(401, 'Please verify your email or mobile number before booking');
 
-  // Reuse an existing patient by EXACT verified email (or exact phone) — never a
-  // fuzzy match, so a booking can't be grafted onto an unrelated patient (hard rule 1).
-  let patientId;
-  const existing = await patientService.findByContact(ctx, { email, phone });
-  if (existing) patientId = existing._id;
-  else {
-    const created = await patientService.createPatient(ctx, { name, phone, email });
-    patientId = created._id;
-  }
+  // Reuse an existing patient by EXACT verified email (or normalized phone) — never a fuzzy
+  // match — and create a DISTINCT record when the same contact is used for a different person
+  // (family on a shared number/email), so histories never merge (hard rule 1 + patient safety).
+  const { patient: matchedPatient } = await patientService.findOrCreatePatient(ctx, { name, phone, email });
+  const patientId = matchedPatient._id;
 
   const appt = await appointmentService.book(ctx, { doctorId, patientId, scheduledAt, source: 'online', reason });
 
@@ -112,14 +115,30 @@ async function publicBook(slug, payload) {
   const doctor = await tenantRepo(Doctor, ctx).findById(doctorId);
   const prepay = prepaymentService.prepaymentRequired(clinic.subscriptionPlan, doctor);
 
+  // Self-service manage link (§5.20) — shown on the success ticket AND sent in the
+  // confirmation message so the patient can reschedule/cancel without calling.
+  const selfService = planHasFeature(clinic.subscriptionPlan, 'SELF_RESCHEDULE');
+  const manageUrl = selfService ? require('../lib/publicLinks').manageUrl(clinic.clinicId, appt._id) : '';
+  const patient = await tenantRepo(Patient, ctx).findById(patientId);
+  if (patient) {
+    require('./commsService').sendBookingConfirmation(ctx, clinic, patient, appt).catch(() => {});
+  }
+
   return {
     token: appt.tokenNumber,
     appointmentId: String(appt._id),
     scheduledAt: appt.scheduledAt,
     doctorName: appt.doctorName,
     status: appt.status,
+    manageUrl,
     prepayment: prepay ? { required: true, amount: Number(doctor.consultationFee) } : { required: false },
   };
+}
+
+/** Public: join the cancellation waitlist for a doctor+day (§5.21, plan-gated). */
+async function joinWaitlist(slug, payload) {
+  const clinic = await resolveClinic(slug);
+  return require('./waitlistService').joinPublic(clinic, payload);
 }
 
 // ---- Public prepayment (no Clerk auth; clinic resolved from slug) ----
@@ -183,11 +202,13 @@ async function publicVoiceTurn(slug, { sessionId, text, callerPhone }) {
 }
 
 module.exports = {
+  resolveClinic,
   getPublicClinic,
   getPublicSlots,
   requestBookingOtp,
   verifyBookingOtp,
   publicBook,
+  joinWaitlist,
   getPublicQueue,
   prepaymentOrder,
   prepaymentVerify,

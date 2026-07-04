@@ -1,11 +1,14 @@
 'use strict';
 
 const campaignService = require('../services/campaignService');
+const recallService = require('../services/recallService');
+const paymentService = require('../services/paymentService');
 
 /**
- * CRM campaign tick (§5.13). Every 10 minutes, run due birthday/follow-up automations —
- * cheap when nothing is due (one indexed clinics query), and per-patient idempotency in
- * campaignService means repeated ticks after a clinic's sendHour never double-send.
+ * Background tick (§5.13). Every 10 minutes, run due birthday/follow-up automations, due treatment
+ * recalls (§5.22), AND reconcile stuck payments (captured-but-uncredited recovery + abandoned-order
+ * cleanup). Cheap when nothing is due (indexed queries); every action is idempotent, so repeated
+ * ticks never double-send or double-credit.
  */
 let timer = null;
 
@@ -15,6 +18,14 @@ function start(intervalMs = 10 * 60 * 1000) {
     campaignService.runDueCampaigns().catch((err) => {
       // eslint-disable-next-line no-console
       console.error('[campaigns] tick error', err.message);
+    });
+    recallService.processDueRecalls().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[recalls] tick error', err.message);
+    });
+    paymentService.reconcileStuckPayments().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[payments] reconcile tick error', err.message);
     });
   }, intervalMs);
   timer.unref?.();

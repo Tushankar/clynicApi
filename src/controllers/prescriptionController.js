@@ -13,4 +13,9 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ ok: true, id: d._id, deletedAt: d.deletedAt, deletedBy: d.deletedBy });
 });
 
-module.exports = { list, get, create, remove };
+// Share the prescription with the patient as a tokenized view/download link (§5.23).
+const share = asyncHandler(async (req, res) => {
+  res.json(await require('../services/shareService').shareDocument(req.ctx, { kind: 'prescription', id: req.params.id }));
+});
+
+module.exports = { list, get, create, remove, share };

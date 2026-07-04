@@ -32,11 +32,16 @@ async function snapshot(ctx, branchId, { display = false } = {}) {
 
   const name = (e) => (display ? firstName(e.patientName) : e.patientName || 'Patient');
 
+  // patientId is included ONLY for authenticated staff views (display:false), never in the public
+  // TV/socket snapshot — it lets the reception/doctor queue link straight to the patient's chart.
+  const pid = (e) => (display ? undefined : e.patientId ? String(e.patientId) : undefined);
+
   return {
     branchId: String(branchId),
-    nowServing: serving.map((e) => ({ id: String(e._id), token: e.tokenNumber, name: name(e), doctorName: e.doctorName, status: e.status })),
+    nowServing: serving.map((e) => ({ id: String(e._id), patientId: pid(e), token: e.tokenNumber, name: name(e), doctorName: e.doctorName, status: e.status })),
     waiting: waiting.map((e, i) => ({
       id: String(e._id),
+      patientId: pid(e),
       token: e.tokenNumber,
       name: name(e),
       doctorName: e.doctorName,
@@ -104,9 +109,29 @@ async function callNext(ctx, { branchId, doctorId } = {}) {
 
   await recomputeWaits(ctx, branchId);
   const snap = await emit(ctx, branchId);
-  // "You're next" for the new front-of-line.
+  // "You're next" for the new front-of-line (TV/self-checkin socket).
   if (snap.waiting[0]) realtime.emitYourTurn(ctx.clinicId, branchId, { token: snap.waiting[0].token, name: snap.waiting[0].name });
+  // Best-effort phone nudge to the patient just called in — so someone who stepped out (car, washroom)
+  // gets pinged instead of being skipped. WhatsApp only, and only when the channel is connected.
+  notifyPatientCalled(ctx, updated).catch(() => {});
   return updated;
+}
+
+async function notifyPatientCalled(ctx, entry) {
+  if (!entry?.patientId) return;
+  const { Patient, Clinic } = require('../models');
+  const [patient, clinic] = await Promise.all([
+    Patient.findOne({ clinicId: ctx.clinicId, _id: entry.patientId }).lean(),
+    Clinic.findOne({ clinicId: ctx.clinicId }).lean(),
+  ]);
+  const comms = require('./commsService');
+  if (!patient?.phone || !comms.whatsappReady(clinic, patient)) return;
+  const { sendNotification } = require('./notifications');
+  const msg = `Hi ${patient.name || 'there'}, it’s your turn at ${clinic?.name || 'the clinic'} — please come to reception (token #${entry.tokenNumber}).`;
+  await sendNotification({ channel: 'whatsapp', to: patient.phone, message: msg });
+  require('./messageLogService')
+    .record({ clinicId: ctx.clinicId, actorId: 'system', actorRole: 'system' }, { patientId: patient._id, patientName: patient.name, channel: 'whatsapp', template: 'custom', subject: 'Your turn', to: patient.phone, status: 'sent' })
+    .catch(() => {});
 }
 
 async function finishEntry(ctx, entryId, toEntryStatus, toApptStatus) {
@@ -124,4 +149,22 @@ async function finishEntry(ctx, entryId, toEntryStatus, toApptStatus) {
 const complete = (ctx, entryId) => finishEntry(ctx, entryId, 'done', 'completed');
 const skip = (ctx, entryId) => finishEntry(ctx, entryId, 'skipped', 'no_show');
 
-module.exports = { snapshot, emit, addEntry, callNext, complete, skip, getActiveEntries, AVG_CONSULT_MINUTES };
+/**
+ * Un-skip / re-queue a patient (recovery from an accidental Skip, or a patient who stepped out and
+ * returned). The skipped entry goes back to 'waiting' and the appointment back to 'checked_in', so
+ * they rejoin the live queue with their token instead of being permanently a no-show.
+ */
+async function reQueue(ctx, entryId) {
+  const r = repo(ctx);
+  const entry = await r.findById(entryId);
+  if (!entry) throw new AppError(404, 'Queue entry not found');
+  if (entry.status !== 'skipped') throw new AppError(409, 'Only a skipped patient can be put back in the queue');
+  const updated = await r.updateById(entryId, { status: 'waiting', finishedAt: null });
+  const appointmentService = require('./appointmentService');
+  await appointmentService.transition(ctx, entry.appointmentId, 'checked_in').catch(() => {});
+  await recomputeWaits(ctx, entry.branchId);
+  await emit(ctx, entry.branchId);
+  return updated;
+}
+
+module.exports = { snapshot, emit, addEntry, callNext, complete, skip, reQueue, getActiveEntries, AVG_CONSULT_MINUTES };

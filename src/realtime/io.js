@@ -91,6 +91,16 @@ function emitQueueUpdate(clinicId, branchId, snapshot) {
   if (io) io.to(roomFor(clinicId, branchId)).emit('queue:update', snapshot);
 }
 
+/**
+ * Appointment board push (staff only): a lightweight signal that some appointment changed
+ * (created / rescheduled / cancelled / status). Carries NO PHI — just ids + an action — so the
+ * open Appointments/Dashboard views can invalidate and refetch. Goes to the clinic staff room
+ * (verified identity), never a public room.
+ */
+function emitAppointmentEvent(clinicId, payload) {
+  if (io) io.to(`notif:${clinicId}`).emit('appointment:changed', payload);
+}
+
 function emitYourTurn(clinicId, branchId, payload) {
   if (io) io.to(roomFor(clinicId, branchId)).emit('queue:your-turn', payload);
 }
@@ -99,4 +109,4 @@ function getIo() {
   return io;
 }
 
-module.exports = { initIo, emitQueueUpdate, emitYourTurn, emitNotification, emitChatMessage, getIo, roomFor };
+module.exports = { initIo, emitQueueUpdate, emitYourTurn, emitNotification, emitChatMessage, emitAppointmentEvent, getIo, roomFor };

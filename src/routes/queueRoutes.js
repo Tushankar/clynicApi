@@ -11,5 +11,6 @@ router.get('/', requireRole(...ALL_STAFF), ctrl.get);
 router.post('/call-next', requireRole(...ALL_STAFF), ctrl.callNext);
 router.post('/:id/complete', requireRole(...ALL_STAFF), ctrl.complete);
 router.post('/:id/skip', requireRole(...ALL_STAFF), ctrl.skip);
+router.post('/:id/requeue', requireRole(...ALL_STAFF), ctrl.reQueue); // un-skip: put a skipped patient back
 
 module.exports = router;

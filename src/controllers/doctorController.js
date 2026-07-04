@@ -16,6 +16,10 @@ const dashboard = asyncHandler(async (req, res) => {
   res.json(await doctorService.getDashboard(req.ctx, { doctorId: req.query.doctorId, date: req.query.date }));
 });
 
+const staffDirectory = asyncHandler(async (req, res) => {
+  res.json({ items: await doctorService.staffDirectory(req.ctx) });
+});
+
 const get = asyncHandler(async (req, res) => {
   res.json(await doctorService.getDoctor(req.ctx, req.params.id));
 });
@@ -29,4 +33,4 @@ const update = asyncHandler(async (req, res) => {
   res.json(await doctorService.updateDoctor(req.ctx, req.params.id, req.body, req.clinic?.subscriptionPlan));
 });
 
-module.exports = { list, me, dashboard, get, create, update };
+module.exports = { list, me, dashboard, staffDirectory, get, create, update };

@@ -42,6 +42,12 @@ function list(ctx, { patientId } = {}) {
 async function updateStatus(ctx, id, status) {
   const d = await repo(ctx).updateById(id, { status });
   if (!d) throw new AppError(404, 'Lab request not found');
+  // Results ready is a state the ordering doctor / desk needs to see — previously silent.
+  if (status === 'completed') {
+    notificationService
+      .emit(ctx, { type: 'lab_request_completed', message: `Lab results are in for ${d.patientName || 'a patient'}`, link: d.patientId ? `/patients/${d.patientId}` : '/dashboard' })
+      .catch(() => {});
+  }
   return d;
 }
 

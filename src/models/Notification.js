@@ -12,17 +12,31 @@ const notificationSchema = new mongoose.Schema(
   {
     recipientType: { type: String, enum: ['staff', 'patient'], default: 'staff' },
     recipientId: { type: String, default: null }, // null = broadcast to all clinic staff
+    // NOTE: keep this list in sync with the events emitted across the app. notificationService.emit
+    // coerces any unknown type to 'other' (and logs) so a future emitter can never SILENTLY drop a
+    // notification via enum validation — a bug that previously hid review/waitlist alerts entirely.
     type: {
       type: String,
       enum: [
+        'appointment_booked',
         'appointment_confirmed',
         'appointment_cancelled',
+        'appointment_rescheduled',
         'reminder_sent',
+        'reminder_failed',
         'payment_received',
+        'payment_refunded',
+        'subscription_past_due',
+        'subscription_cancelled',
         'doctor_unavailable',
+        'availability_block_impact',
         'lab_report_uploaded',
         'lab_request_created',
+        'lab_request_completed',
         'prescription_created',
+        'review_received',
+        'waitlist_joined',
+        'waitlist_slot_freed',
         'other',
       ],
       default: 'other',

@@ -24,7 +24,9 @@ const router = express.Router();
 const ALL_STAFF = ['owner', 'doctor', 'receptionist'];
 
 router.get('/', requireRole(...ALL_STAFF), ctrl.list);
+router.get('/deleted', requireRole('owner'), ctrl.listDeleted); // owner "recently deleted" — before /:id
 router.post('/', requireRole('owner', 'receptionist'), ctrl.create);
+router.post('/:id/restore', requireRole('owner'), ctrl.restore); // undo a soft delete (owner-only)
 router.get('/:id/detail', requireRole(...ALL_STAFF), ctrl.detail); // before /:id
 // Patient timeline — Phase 2, plan-gated (PATIENT_TIMELINE).
 router.get('/:id/timeline', requireRole(...ALL_STAFF), requireFeature('PATIENT_TIMELINE'), ctrl.timeline);

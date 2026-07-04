@@ -121,6 +121,7 @@ test('(a) public booking via email OTP → appointment + token; 24h/2h reminders
     reason: 'Toothache',
   });
   assert.ok(booking.token >= 1, 'a token number is issued');
+  assert.ok(booking.manageUrl, 'a self-service manage link is issued (§5.20)');
 
   const appt = await Appointment.findById(booking.appointmentId).lean();
   assert.equal(appt.clinicId, 'org_A');
@@ -130,6 +131,17 @@ test('(a) public booking via email OTP → appointment + token; 24h/2h reminders
 
   const reminders = await Reminder.find({ appointmentId: appt._id }).lean();
   assert.deepEqual(reminders.map((r) => r.type).sort(), ['appointment_24h', 'appointment_2h'].sort(), '24h + 2h reminders scheduled');
+
+  // The booking confirmation (carrying the manage link) is sent best-effort right after
+  // booking — wait for it to flush so the reminder-only count below is deterministic.
+  const confirmed = await (async () => {
+    for (let i = 0; i < 50; i += 1) {
+      if (emailAdapter.getSentLog().some((m) => /confirmed/i.test(m.subject || ''))) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  })();
+  assert.ok(confirmed, 'a booking confirmation email is sent right after booking (§5.20)');
 
   // Email sends in dev: process due reminders as if "now" were the appointment time.
   emailAdapter.clearSentLog();

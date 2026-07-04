@@ -156,6 +156,33 @@ class TenantRepository {
   }
 
   /**
+   * Restore a soft-deleted document (hard rule 6 recovery): clears deletedAt/deletedBy and
+   * audits a 'restore'. This is the undo the product previously lacked — a mis-deleted patient/
+   * invoice/prescription could otherwise only be recovered by a manual DB write. Owner-gated at
+   * the route layer. Returns null if there is no soft-deleted row with that id.
+   */
+  async restoreById(id) {
+    if (!this.isSoftDeletable) throw new AppError(400, `${this.entityType} is not soft-deletable`);
+    const existing = await this.Model.findOne(this.scopedFilter({ _id: id }, { includeDeleted: true }));
+    if (!existing || !existing.deletedAt) return null; // not found, or wasn't deleted
+    const before = existing.toObject();
+    existing.deletedAt = null;
+    existing.deletedBy = null;
+    const saved = await existing.save();
+    await this._audit('restore', saved._id, before, saved.toObject());
+    return saved;
+  }
+
+  /** List soft-deleted docs (for an owner "recently deleted" / trash view). Newest-deleted first. */
+  listDeleted(filter = {}, opts = {}) {
+    const { limit = 100, projection, lean = true } = opts;
+    let q = this.Model.find({ ...filter, clinicId: this.ctx.clinicId, deletedAt: { $ne: null } }, projection).sort({ deletedAt: -1 });
+    if (typeof limit === 'number') q = q.limit(limit);
+    if (lean) q = q.lean();
+    return q.exec();
+  }
+
+  /**
    * Record that a record was viewed (hard rule 7 mentions report views).
    * Optional, for sensitive reads; not called on routine list/get by default.
    */

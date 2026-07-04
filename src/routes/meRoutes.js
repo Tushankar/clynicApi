@@ -6,6 +6,7 @@ const { resolveFeatures, limitsForPlan } = require('../config/plans');
 const { requireRole } = require('../middleware/requireRole');
 const { tenantRepo } = require('../lib/TenantRepository');
 const { Clinic } = require('../models');
+const activityService = require('../services/activityService');
 const AppError = require('../utils/AppError');
 
 /**
@@ -68,8 +69,32 @@ router.patch(
       if (typeof req.body[key] === 'string') patch[key] = req.body[key].trim().slice(0, 300);
     }
     if (patch.name === '') delete patch.name; // name is required — never blank it
+    // Branding: the clinic logo flows to the public website, emails, and shared documents.
+    // Accept an http(s) URL or an empty string to clear it (no data:/javascript: URLs).
+    if (typeof req.body.logoUrl === 'string') {
+      const logo = req.body.logoUrl.trim().slice(0, 500);
+      if (logo && !/^https?:\/\//i.test(logo)) throw new AppError(400, 'Logo must be a hosted http(s) image URL (or empty to remove it).');
+      patch.logoUrl = logo;
+    }
     const updated = await repo.updateById(clinic._id, patch);
     res.json({ clinic: clinicView(updated) });
+  })
+);
+
+/**
+ * Owner activity feed — a readable, PHI-safe view over the audit log (hard rule 7).
+ * Owner-only (rule 4); clinic-scoped in the service (rule 1).
+ */
+router.get(
+  '/activity',
+  requireRole('owner'),
+  asyncHandler(async (req, res) => {
+    const items = await activityService.recentActivity(req.ctx, {
+      limit: req.query.limit,
+      entityType: req.query.entityType,
+      action: req.query.action,
+    });
+    res.json({ items });
   })
 );
 

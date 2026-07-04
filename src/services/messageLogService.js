@@ -14,21 +14,41 @@ const TEMPLATE_LABEL = {
   followup: 'Follow-up reminder',
   appointment_24h: 'Reminder · 24h',
   appointment_2h: 'Reminder · 2h',
+  booking_confirmation: 'Booking confirmation',
+  appointment_cancelled: 'Cancellation notice',
+  appointment_rescheduled: 'Reschedule notice',
+  review_request: 'Review request',
+  recall: 'Treatment recall',
+  waitlist: 'Waitlist alert',
+  payment_link: 'Payment link',
+  document: 'Shared document',
   custom: 'Message',
 };
+
+// Valid templates, read from the schema so the coercion backstop can't drift.
+const KNOWN_TEMPLATES = new Set(MessageLog.schema.path('template').enumValues);
 
 function repo(ctx) {
   return tenantRepo(MessageLog, ctx, { audit: false });
 }
 
-/** Record one outbound message. Best-effort: swallows its own errors, returns null on failure. */
+/**
+ * Record one outbound message. Best-effort: it must NEVER throw into the send path. An unknown
+ * template is coerced to 'custom' (and logged) so the row is still persisted — a validation
+ * throw here used to drop the row entirely, so a failed booking/review/recall left no trace.
+ */
 async function record(ctx, { patientId, patientName, channel = 'email', template = 'custom', subject, to, status = 'sent', error = null } = {}) {
+  let safeTemplate = template;
+  if (!KNOWN_TEMPLATES.has(template)) {
+    console.warn(`[messageLogService] unknown template "${template}" — coerced to "custom". Add it to the MessageLog.template enum.`);
+    safeTemplate = 'custom';
+  }
   try {
     return await repo(ctx).create({
       patientId: patientId || null,
       patientName,
       channel,
-      template,
+      template: safeTemplate,
       subject,
       to,
       status,
@@ -36,7 +56,9 @@ async function record(ctx, { patientId, patientName, channel = 'email', template
       sentBy: ctx.actorId || 'system',
       sentByRole: ctx.actorRole || 'system',
     });
-  } catch {
+  } catch (err) {
+    // Never break a send because logging failed — but do NOT do it silently.
+    console.error('[messageLogService] failed to record outbound message:', err?.message || err);
     return null;
   }
 }

@@ -32,6 +32,11 @@ const messageLogRoutes = require('./messageLogRoutes');
 const whatsappRoutes = require('./whatsappRoutes');
 const websiteRoutes = require('./websiteRoutes');
 const websiteController = require('../controllers/websiteController');
+const availabilityRoutes = require('./availabilityRoutes');
+const waitlistRoutes = require('./waitlistRoutes');
+const recallRoutes = require('./recallRoutes');
+const expenseRoutes = require('./expenseRoutes');
+const exportRoutes = require('./exportRoutes');
 
 const router = express.Router();
 
@@ -81,6 +86,11 @@ api.use('/whatsapp', whatsappRoutes);
 api.use('/analytics', analyticsRoutes);
 api.use('/ai', aiRoutes);
 api.use('/website', websiteRoutes);
+api.use('/availability', availabilityRoutes);
+api.use('/waitlist', waitlistRoutes);
+api.use('/recalls', recallRoutes);
+api.use('/expenses', expenseRoutes);
+api.use('/export', exportRoutes);
 
 router.use(api);
 

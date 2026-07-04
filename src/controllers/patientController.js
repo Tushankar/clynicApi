@@ -57,4 +57,12 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ ok: true, id: patient._id, deletedAt: patient.deletedAt, deletedBy: patient.deletedBy });
 });
 
-module.exports = { list, get, detail, timeline, create, update, remove };
+// Owner-only recovery: list recently-deleted patients + restore one (undo a mis-deletion).
+const listDeleted = asyncHandler(async (req, res) => {
+  res.json({ items: await patientService.listDeletedPatients(req.ctx, {}) });
+});
+const restore = asyncHandler(async (req, res) => {
+  res.json(await patientService.restorePatient(req.ctx, req.params.id));
+});
+
+module.exports = { list, get, detail, timeline, create, update, remove, listDeleted, restore };

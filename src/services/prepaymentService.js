@@ -21,6 +21,13 @@ async function createOrder(ctx, appointmentId) {
   const amount = Number(doctor?.consultationFee) || 0;
   if (!(amount > 0)) throw new AppError(400, 'No prepayment amount configured for this doctor');
 
+  // Reuse an existing OPEN prepayment order for this appointment instead of minting a new one, so a
+  // patient who reloads the pay step can't create a second order that later double-charges.
+  const open = await Payment.findOne({ clinicId: ctx.clinicId, kind: 'prepayment', appointmentId: appt._id, status: { $in: ['created', 'processing'] } }).sort({ createdAt: -1 });
+  if (open && Number(open.amount) === amount) {
+    return { orderId: open.orderId, amount: open.amount, currency: open.currency, keyId: config.payments.keyId, driver: gateway.driver, reused: true };
+  }
+
   const order = await gateway.createOrder({ amount, currency: config.payments.currency, receipt: String(appt._id) });
   await tenantRepo(Payment, ctx).create({
     kind: 'prepayment',

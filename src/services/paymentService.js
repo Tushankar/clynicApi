@@ -19,6 +19,18 @@ async function createInvoiceOrder(ctx, invoiceId) {
   const outstanding = round2(inv.total - inv.amountPaid);
   if (!(outstanding > 0)) throw new AppError(400, 'Invoice has no outstanding balance');
 
+  // Reuse an existing OPEN order for this invoice instead of minting a new one. Otherwise a patient
+  // who taps Pay twice (or reloads after a dropped response) creates a second full-value order, and
+  // two captures would double-charge. Only reuse when the amount still matches the live outstanding;
+  // a stale-amount open order (a partial payment landed since) is retired so it can't be paid later.
+  const open = await Payment.findOne({ clinicId: ctx.clinicId, kind: 'invoice', invoiceId: inv._id, status: { $in: ['created', 'processing'] } }).sort({ createdAt: -1 });
+  if (open) {
+    if (round2(open.amount) === outstanding) {
+      return { orderId: open.orderId, amount: open.amount, currency: open.currency, keyId: config.payments.keyId, driver: gateway.driver, paymentRecordId: String(open._id), reused: true };
+    }
+    await Payment.updateOne({ clinicId: ctx.clinicId, _id: open._id, status: 'created' }, { $set: { status: 'expired' } });
+  }
+
   const order = await gateway.createOrder({ amount: outstanding, currency: config.payments.currency, receipt: inv.invoiceNumber });
   const payment = await repo(ctx).create({
     kind: 'invoice',
@@ -143,4 +155,46 @@ async function handleWebhook(rawBody, signature, eventIdHeader) {
   return { processed: true };
 }
 
-module.exports = { createInvoiceOrder, verifyPayment, handleWebhook, claimAndApply };
+// Reconciliation windows.
+const STUCK_PROCESSING_MINUTES = 15; // claimed but never committed to 'paid' (dropped verify/webhook)
+const ABANDONED_CREATED_MINUTES = 30; // order created, checkout never completed
+
+/**
+ * Reconcile stuck payments (run on a timer). Two jobs:
+ *   1) A 'processing' row that carries a paymentId but was never committed to 'paid' means the
+ *      /verify round-trip or webhook dropped AFTER the money was captured — the classic
+ *      captured-but-uncredited case. Re-running the idempotent claim finishes the credit (or is a
+ *      safe no-op if it already landed). If it still can't be applied, we surface it to staff so it
+ *      is never a SILENT loss.
+ *   2) A 'created' row with no capture, older than the window, is an abandoned checkout — close it
+ *      as 'expired' so open orders don't pile up (and a reused-order lookup stays clean).
+ */
+async function reconcileStuckPayments({ now = new Date() } = {}) {
+  const processingCutoff = new Date(now.getTime() - STUCK_PROCESSING_MINUTES * 60000);
+  const createdCutoff = new Date(now.getTime() - ABANDONED_CREATED_MINUTES * 60000);
+  let recovered = 0;
+  let flagged = 0;
+
+  const stuck = await Payment.find({ status: 'processing', paymentId: { $type: 'string' }, updatedAt: { $lt: processingCutoff } }).limit(200);
+  for (const p of stuck) {
+    const ctx = { clinicId: p.clinicId, actorId: 'system:reconcile', actorRole: null };
+    try {
+      const r = await claimAndApply(ctx, { orderId: p.orderId, paymentId: p.paymentId, method: p.method || 'online' });
+      if (r.applied) recovered += 1;
+    } catch (err) {
+      flagged += 1;
+      require('./notificationService')
+        .emit(ctx, { type: 'other', message: `A payment needs manual reconciliation (order ${p.orderId}) — money may have been captured. Please check the gateway.`, link: '/billing' })
+        .catch(() => {});
+    }
+  }
+
+  const abandoned = await Payment.updateMany(
+    { status: 'created', paymentId: null, createdAt: { $lt: createdCutoff } },
+    { $set: { status: 'expired' } }
+  );
+
+  return { recovered, flagged, expired: abandoned.modifiedCount || abandoned.nModified || 0 };
+}
+
+module.exports = { createInvoiceOrder, verifyPayment, handleWebhook, claimAndApply, reconcileStuckPayments };

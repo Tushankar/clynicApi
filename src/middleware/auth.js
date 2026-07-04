@@ -1,9 +1,10 @@
 'use strict';
 
-const { getAuth } = require('@clerk/express');
+const { getAuth, clerkClient } = require('@clerk/express');
 const config = require('../config/env');
 const { normalizeRole } = require('../config/roles');
 const Clinic = require('../models/Clinic');
+const Staff = require('../models/Staff');
 const AppError = require('../utils/AppError');
 
 /**
@@ -80,6 +81,47 @@ async function ensureClinic(clinicId, hints = {}) {
   }
 }
 
+/**
+ * Just-in-time Staff provisioning. Identity/login lives in Clerk; `staff` is the clinic-scoped
+ * mirror (role + name/email) that powers the audit-log "who did this", the internal chat directory,
+ * and the doctor↔login link (staff.clerkUserId → doctor.staffId). Historically nothing ever wrote a
+ * Staff row (the Clerk sync webhook was never wired), so the audit log couldn't name anyone and a
+ * logged-in doctor could never be resolved to their Doctor record. We provision here on first sight
+ * of an authenticated staffer — the same JIT pattern as ensureClinic — so it works without any
+ * external webhook. Best-effort: never blocks or fails the request.
+ */
+async function ensureStaff(ctx, hints = {}) {
+  if (!ctx.actorRole) return; // Clerk 'member' / unmapped role → denied everywhere; not real staff.
+  try {
+    const existing = await Staff.findOne({ clinicId: ctx.clinicId, clerkUserId: ctx.actorId })
+      .select('_id role')
+      .lean();
+    if (existing) {
+      // Keep the mirrored role fresh if the owner changed it in Clerk.
+      if (existing.role !== ctx.actorRole) {
+        await Staff.updateOne({ _id: existing._id }, { $set: { role: ctx.actorRole } });
+      }
+      return;
+    }
+    // First sight of this staffer — capture name/email for the audit log + directory.
+    let name = hints.name || null;
+    let email = hints.email || null;
+    if (!name && !config.devAuth) {
+      try {
+        const u = await clerkClient.users.getUser(ctx.actorId);
+        name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || null;
+        email = u.primaryEmailAddress?.emailAddress || u.emailAddresses?.[0]?.emailAddress || null;
+      } catch {
+        /* Clerk unreachable — provision with the role only; name resolves on a later request. */
+      }
+    }
+    await Staff.create({ clinicId: ctx.clinicId, clerkUserId: ctx.actorId, role: ctx.actorRole, name, email });
+  } catch (err) {
+    if (err && err.code === 11000) return; // race: a concurrent request created it first.
+    console.warn('[auth] staff provisioning skipped:', err?.message || err);
+  }
+}
+
 async function attachAuthContext(req, res, next) {
   try {
     const { clinicId, role, userId, orgSlug } = resolveIdentity(req);
@@ -88,6 +130,16 @@ async function attachAuthContext(req, res, next) {
       throw new AppError(401, 'Not authenticated');
     }
     if (!clinicId) {
+      // A platform super-admin needn't belong to any clinic org — let them through with a
+      // clinic-less context so they can reach /api/admin (cross-clinic aggregates + clinic mgmt).
+      // Every clinic-scoped route still denies them (requireRole/requireFeature run first), and
+      // TenantRepository refuses a clinic-less query, so no tenant data is ever exposed.
+      if (config.superAdminIds.includes(userId)) {
+        req.ctx = { clinicId: null, actorId: userId, actorRole: null };
+        req.auth = { userId, clinicId: null, role: null, isSuperAdmin: true };
+        req.clinic = null;
+        return next();
+      }
       // Authenticated but no active clinic/organization selected.
       throw new AppError(401, 'No active clinic. Select or create an organization.');
     }
@@ -98,6 +150,9 @@ async function attachAuthContext(req, res, next) {
     // Load (or provision on first use) the clinic doc so subscriptionPlan is available to
     // requireFeature (step 8). Direct lookup is legitimate here: the auth layer resolves the tenant.
     req.clinic = await ensureClinic(clinicId, { slug: orgSlug });
+
+    // Mirror the staffer into the clinic-scoped `staff` collection (audit names + doctor link).
+    await ensureStaff(req.ctx, { name: req.header('x-dev-user-name') || null });
 
     next();
   } catch (err) {
@@ -111,10 +166,12 @@ async function attachAuthContext(req, res, next) {
  * route-level marker and a safety net if mounted standalone.)
  */
 function requireAuth(req, res, next) {
+  // Super-admins are allowed through without an active clinic (they only reach /api/admin).
+  if (req.auth?.isSuperAdmin && req.auth?.userId) return next();
   if (!req.ctx || !req.ctx.clinicId || !req.auth?.userId) {
     return next(new AppError(401, 'Not authenticated'));
   }
   next();
 }
 
-module.exports = { attachAuthContext, requireAuth, ensureClinic };
+module.exports = { attachAuthContext, requireAuth, ensureClinic, ensureStaff };

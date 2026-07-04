@@ -21,6 +21,9 @@ const paymentEntrySchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 0 },
     method: { type: String, enum: ['cash', 'upi', 'card', 'online'], required: true },
     reference: { type: String, trim: true }, // razorpay paymentId, UPI ref, etc.
+    // Client-generated key for DESK payments (cash/UPI/card). Lets recordPayment reject a retried/
+    // double-submitted request on flaky clinic wifi instead of double-crediting the invoice.
+    idempotencyKey: { type: String, trim: true, default: undefined },
     paidAt: { type: Date, default: Date.now },
     byStaffId: { type: String, default: null },
   },

@@ -39,11 +39,26 @@ const FEATURES = {
   // All plans — every clinic gets a live public website (§5.19)
   WEBSITE_LIVE: ['basic', 'standard', 'premium'],
 
+  // Patient self-service: tokenized reschedule/cancel links in confirmations +
+  // reminders. Part of the core booking loop, so every plan gets it.
+  SELF_RESCHEDULE: ['basic', 'standard', 'premium'],
+
+  // Scheduling operations (Phase 5)
+  AVAILABILITY_BLOCKS: ['standard', 'premium'], // doctor leave / clinic holidays / ad-hoc blocks
+  WAITLIST: ['standard', 'premium'], // cancellation waitlist + auto-notify
+
+  // Money operations (Phase 5) — India-first billing depth.
+  PAYMENT_LINKS: ['standard', 'premium'], // send a pay-online link for an invoice's dues
+  CASH_REGISTER: ['standard', 'premium'], // day-end register: totals by method + dues
+  DOCUMENT_SHARING: ['standard', 'premium'], // invoice/prescription share links via email/WhatsApp
+  DATA_EXPORT: ['standard', 'premium'], // CSV export of patients/appointments/invoices
+
   // CRM & retention: Standard gets the CRM + automated campaigns (birthday wishes,
   // follow-up reminders) with the professional DEFAULT templates. Editing those
   // templates and AI-personalized campaign text are Premium-only.
   CRM: ['standard', 'premium'],
   CRM_AUTOMATION: ['standard', 'premium'],
+  REVIEW_REQUESTS: ['standard', 'premium'], // post-visit "rate your visit" flow → website reviews
   TEMPLATE_EDITING: ['premium'],
 
   // Premium (Phase 4)
@@ -51,6 +66,11 @@ const FEATURES = {
   ANALYTICS: ['premium'],
   AI_FEATURES: ['premium'], // AI is NOT in Standard — Premium only
   CMS_ADVANCED: ['premium'], // custom pages, blog, reviews, SEO, richer theme (§5.19 / 8.6)
+
+  // Premium (Phase 5)
+  SELF_CHECKIN: ['premium'], // QR self check-in kiosk → live queue
+  RECALLS: ['premium'], // treatment recalls ("cleaning due in 6 months")
+  EXPENSES: ['premium'], // expense tracking + P&L view in analytics
 };
 
 // Numeric limits per plan (enforce separately from feature flags).

@@ -26,7 +26,9 @@ const TRANSITIONS = {
   in_consultation: ['completed', 'cancelled'],
   completed: [],
   cancelled: [],
-  no_show: [],
+  // A no-show can be recovered (un-skip / re-queue): a patient who stepped out and came back, or
+  // an accidental Skip, can be put back into the queue rather than being permanently lost.
+  no_show: ['checked_in'],
 };
 
 const TERMINAL_STATUSES = ['completed', 'cancelled', 'no_show'];

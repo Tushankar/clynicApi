@@ -13,7 +13,7 @@ const { PLANS } = require('../config/plans');
 // ---- Public website (§5.19 / 8.6) ---------------------------------------------------
 // Platform-hosted only; NO custom/external domain fields. The site's slug is the clinic's
 // existing top-level `slug` (already globally unique + indexed) — not duplicated here.
-const TEMPLATES = ['clean-clinical', 'warm-family', 'modern-specialist'];
+const TEMPLATES = ['premium-signature', 'clean-clinical', 'warm-family', 'modern-specialist'];
 
 const themeSchema = new mongoose.Schema(
   { primaryColor: { type: String, trim: true, default: '' }, accentColor: { type: String, trim: true, default: '' }, logoUrl: { type: String, trim: true, default: '' } },
@@ -48,8 +48,11 @@ const seoSchema = new mongoose.Schema(
 );
 const websiteSchema = new mongoose.Schema(
   {
-    published: { type: Boolean, default: true }, // §5.19: every clinic gets a LIVE site (owner can unpublish)
-    template: { type: String, enum: TEMPLATES, default: 'clean-clinical' },
+    // §5.19: every clinic GETS a site, but it is not auto-exposed. A brand-new clinic (auto-named
+    // "My Clinic", no doctors) should not have a live public page before the owner has set anything
+    // up — go-live is a deliberate step (see the onboarding checklist). Owners publish from Website.
+    published: { type: Boolean, default: false },
+    template: { type: String, enum: TEMPLATES, default: 'premium-signature' },
     theme: { type: themeSchema, default: () => ({}) },
     content: { type: contentSchema, default: () => ({}) },
     reviews: { type: [reviewSchema], default: [] }, // Premium (CMS_ADVANCED)
@@ -86,6 +89,10 @@ const crmSettingsSchema = new mongoose.Schema(
   {
     birthdayEnabled: { type: Boolean, default: false },
     followupEnabled: { type: Boolean, default: false },
+    // Post-visit review requests (§5.21): after a completed visit, ask the patient to
+    // rate it; 4–5★ raters are routed to the clinic's Google review page.
+    reviewRequestEnabled: { type: Boolean, default: false },
+    googleReviewUrl: { type: String, trim: true, default: '' }, // "Review us on Google" deep link
     sendHour: { type: Number, min: 0, max: 23, default: 9 }, // local hour campaigns go out
     aiPersonalize: { type: Boolean, default: false }, // Premium (AI_FEATURES) only
     emailTheme: { type: emailThemeSchema, default: () => ({}) },

@@ -71,6 +71,8 @@ async function view(clinic) {
     settings: {
       birthdayEnabled: Boolean(s.birthdayEnabled),
       followupEnabled: Boolean(s.followupEnabled),
+      reviewRequestEnabled: Boolean(s.reviewRequestEnabled),
+      googleReviewUrl: s.googleReviewUrl || '',
       sendHour: s.sendHour ?? 9,
       aiPersonalize: Boolean(s.aiPersonalize),
     },
@@ -104,6 +106,17 @@ async function updateSettings(ctx, body = {}) {
   const patch = {};
   if (typeof body.birthdayEnabled === 'boolean') patch['crmSettings.birthdayEnabled'] = body.birthdayEnabled;
   if (typeof body.followupEnabled === 'boolean') patch['crmSettings.followupEnabled'] = body.followupEnabled;
+  if (typeof body.reviewRequestEnabled === 'boolean') {
+    if (body.reviewRequestEnabled && !planHasFeature(clinic.subscriptionPlan, 'REVIEW_REQUESTS')) {
+      throw new AppError(403, 'Review requests are available on Standard and Premium plans.');
+    }
+    patch['crmSettings.reviewRequestEnabled'] = body.reviewRequestEnabled;
+  }
+  if (typeof body.googleReviewUrl === 'string') {
+    const url = body.googleReviewUrl.trim().slice(0, 500);
+    if (url && !/^https?:\/\//i.test(url)) throw new AppError(400, 'The Google review link must be an http(s) URL (or empty to clear it).');
+    patch['crmSettings.googleReviewUrl'] = url;
+  }
   if (body.sendHour !== undefined) {
     const h = Number(body.sendHour);
     if (!Number.isInteger(h) || h < 0 || h > 23) throw new AppError(400, 'sendHour must be 0–23');

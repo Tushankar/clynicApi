@@ -20,6 +20,16 @@ const doctorSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     specialization: { type: String, trim: true },
     consultationFee: { type: Number, default: 0 },
+    followUpFee: { type: Number, default: 0 }, // fee for a follow-up visit (0 = same as consultation)
+
+    // Public profile (§5.19) — the trust/marketing surface on the website + booking page.
+    photoUrl: { type: String, trim: true, default: '' }, // hosted http(s) headshot
+    qualifications: { type: String, trim: true, default: '' }, // e.g. "BDS, MDS (Orthodontics)"
+    experienceYears: { type: Number, default: 0, min: 0 },
+    registrationNumber: { type: String, trim: true, default: '' }, // medical council reg no.
+    bio: { type: String, trim: true, default: '' },
+    services: { type: [String], default: [] }, // capabilities / conditions treated
+    languages: { type: [String], default: [] }, // languages spoken
 
     // Weekly availability: { mon: [{start,end}], tue: [...], ... }
     availability: {

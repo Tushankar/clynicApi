@@ -56,11 +56,46 @@ async function handleSubscriptionWebhook(event) {
     const before = await Subscription.findOne({ clinicId }).lean();
     await Subscription.updateOne({ clinicId }, { $set: { status: 'past_due' } });
     await audit(clinicId, 'Subscription', before?._id, { status: before?.status }, { status: 'past_due' });
+    // A failed charge used to be completely silent (no lock, no message) — surface it so the owner
+    // can fix payment BEFORE an eventual cancellation strips their features.
+    await notifyPastDue(clinicId).catch(() => {});
   } else if (type === 'subscription.cancelled') {
     // Downgrade locks Standard/Premium features automatically via §6.5.
     await applySubscription(clinicId, 'basic', 'cancelled', { providerSubscriptionId: entity.id });
+    const sysCtx = { clinicId, actorId: 'system:subscription', actorRole: null };
+    require('./notificationService')
+      .emit(sysCtx, { type: 'subscription_cancelled', message: 'Your subscription was cancelled — your clinic is now on the Basic plan. Premium features are locked until you resubscribe.', link: '/dashboard/plan' })
+      .catch(() => {});
   }
   return { processed: true };
+}
+
+/** Owner-facing dunning when a subscription charge fails (in-app + best-effort email). */
+async function notifyPastDue(clinicId) {
+  const sysCtx = { clinicId, actorId: 'system:subscription', actorRole: null };
+  require('./notificationService')
+    .emit(sysCtx, {
+      type: 'subscription_past_due',
+      message: 'Your last subscription payment failed. Please update your payment method to keep your premium features.',
+      link: '/dashboard/plan',
+    })
+    .catch(() => {});
+  try {
+    const clinic = await Clinic.findOne({ clinicId }).lean();
+    if (clinic?.email) {
+      const { sendNotification } = require('./notifications');
+      await sendNotification({
+        channel: 'email',
+        to: clinic.email,
+        subject: `Payment failed — action needed for ${clinic.name || 'your clinic'}`,
+        message:
+          `Hi,\n\nWe couldn't process your latest subscription payment for ${clinic.name || 'your clinic'}.\n\n` +
+          `Please update your payment method soon to avoid losing access to your premium features.\n\n— The Clynic team`,
+      });
+    }
+  } catch {
+    /* dunning email is best-effort — the in-app notification is the reliable signal */
+  }
 }
 
 function getSubscription(ctx) {
@@ -68,14 +103,42 @@ function getSubscription(ctx) {
 }
 
 /**
- * Owner-initiated plan change. In production this creates a Razorpay subscription and
- * the authoritative change arrives via webhook; in dev (mock) it applies immediately
- * so the loop is demonstrable end to end.
+ * Owner-initiated plan change. Behaviour by direction so the owner never hits a dead end:
+ *   - dev (mock gateway): apply immediately end-to-end (unchanged).
+ *   - downgrade / same tier: apply immediately in any environment — no payment is required to
+ *     move DOWN, so there's no reason to block it behind checkout.
+ *   - upgrade in production: a self-serve Razorpay subscription checkout isn't wired yet, so
+ *     instead of a raw 501 dead-end we RECORD the request and confirm it to the owner (the
+ *     platform activates it). Returns a friendly pending result the UI renders as "requested".
  */
 async function requestPlanChange(ctx, plan) {
   if (!PLANS.includes(plan)) throw new AppError(400, 'Invalid plan');
   if (config.payments.driver === 'mock') return applySubscription(ctx.clinicId, plan, 'active');
-  throw new AppError(501, 'Live subscription checkout is configured via Razorpay subscriptions + webhook');
+
+  const clinic = await Clinic.findOne({ clinicId: ctx.clinicId }).lean();
+  const current = clinic?.subscriptionPlan || 'basic';
+  const curIdx = PLANS.indexOf(current);
+  const tgtIdx = PLANS.indexOf(plan);
+
+  if (tgtIdx === curIdx) return { plan, current, status: 'active', unchanged: true };
+  if (tgtIdx < curIdx) {
+    // Downgrade — apply immediately (features lock via §6.5). Basic == cancelled subscription.
+    const applied = await applySubscription(ctx.clinicId, plan, tgtIdx === 0 ? 'cancelled' : 'active');
+    return { ...applied, current, downgraded: true };
+  }
+
+  // Upgrade in production — no dead end. Log the intent + tell the owner it's in progress.
+  // eslint-disable-next-line no-console
+  console.info(`[subscription] upgrade requested: clinic ${ctx.clinicId} ${current} → ${plan}`);
+  require('./notificationService')
+    .emit(ctx, { type: 'other', message: `Upgrade to the ${plan} plan requested — our team will activate it shortly.`, link: '/dashboard/plan' })
+    .catch(() => {});
+  return {
+    pending: true,
+    plan,
+    current,
+    message: `Upgrade to ${plan} requested — our team will confirm your new plan shortly. Nothing changes and no data is lost in the meantime.`,
+  };
 }
 
 module.exports = { applySubscription, handleSubscriptionWebhook, getSubscription, requestPlanChange };
