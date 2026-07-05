@@ -4,6 +4,7 @@ const patientService = require('../services/patientService');
 const timelineService = require('../services/timelineService');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
+const { planHasFeature } = require('../config/plans');
 
 /**
  * Patient controllers. Thin HTTP layer — all tenant rules live in the service +
@@ -37,9 +38,11 @@ const detail = asyncHandler(async (req, res) => {
   res.json(await patientService.getPatientDetail(req.ctx, req.params.id));
 });
 
-// Patient timeline (Phase 2, plan-gated at the route).
+// Patient timeline (Phase 2, plan-gated at the route). Pharmacy dispenses are merged in ONLY for
+// Ultra Premium clinics (feature-gated branch) — every other tier's timeline is unchanged.
 const timeline = asyncHandler(async (req, res) => {
-  res.json({ items: await timelineService.getTimeline(req.ctx, req.params.id) });
+  const includePharmacy = planHasFeature(req.clinic?.subscriptionPlan, 'MEDICINE_DISPENSING');
+  res.json({ items: await timelineService.getTimeline(req.ctx, req.params.id, { includePharmacy }) });
 });
 
 const create = asyncHandler(async (req, res) => {

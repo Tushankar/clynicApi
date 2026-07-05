@@ -33,4 +33,14 @@ module.exports = {
   WaitlistEntry: require('./WaitlistEntry'),
   Recall: require('./Recall'),
   Expense: require('./Expense'),
+  // Pharmacy & Vendor module (Ultra Premium) — UP-A
+  Medicine: require('./Medicine'),
+  InventoryBatch: require('./InventoryBatch'),
+  // Pharmacy & Vendor module (Ultra Premium) — UP-B (procurement & expenses)
+  Supplier: require('./Supplier'),
+  PurchaseOrder: require('./PurchaseOrder'),
+  PharmacyExpense: require('./PharmacyExpense'),
+  // Pharmacy & Vendor module (Ultra Premium) — UP-C (dispensing & dosage)
+  Dispense: require('./Dispense'),
+  DosageSchedule: require('./DosageSchedule'),
 };

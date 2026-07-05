@@ -11,7 +11,10 @@
  * features attach `requireFeature('KEY')` with zero new plumbing.
  */
 
-const PLANS = ['basic', 'standard', 'premium'];
+// Ordered by rank — index encodes tier level (see requestPlanChange's indexOf upgrade/downgrade
+// math). `ultra_premium` is APPENDED at the end so it ranks above premium and the existing
+// tiers keep their indices (0/1/2). It is a strict SUPERSET of premium (see planHasFeature).
+const PLANS = ['basic', 'standard', 'premium', 'ultra_premium'];
 
 // Each feature is a stable key. A plan includes a feature if listed.
 const FEATURES = {
@@ -71,17 +74,40 @@ const FEATURES = {
   SELF_CHECKIN: ['premium'], // QR self check-in kiosk → live queue
   RECALLS: ['premium'], // treatment recalls ("cleaning due in 6 months")
   EXPENSES: ['premium'], // expense tracking + P&L view in analytics
+
+  // ── Pharmacy & Vendor module (Ultra Premium ONLY) ────────────────────────────
+  // The gating vocabulary for the whole pharmacy add-on. These map ONLY to the new
+  // tier, so they resolve false for basic/standard/premium — the module is invisible
+  // and inert on every lower tier. UP-A wires PHARMACY_MANAGEMENT (catalog + inventory
+  // + stock alerts); later phases (UP-B..UP-E) attach the rest. ultra_premium also
+  // inherits every premium feature above via planHasFeature (strict superset).
+  PHARMACY_MANAGEMENT: ['ultra_premium'], // medicine catalog + inventory (batches, availability, alerts)
+  SUPPLIER_PROCUREMENT: ['ultra_premium'], // suppliers + purchase orders + expenses (UP-B)
+  MEDICINE_DISPENSING: ['ultra_premium'], // prescription-linked dispensing (UP-C)
+  DOSAGE_MANAGEMENT: ['ultra_premium'], // patient dosage schedules + reminders (UP-C)
+  PHARMACY_STOREFRONT: ['ultra_premium'], // public Apollo-style store (UP-D)
+  PHARMACY_ANALYTICS: ['ultra_premium'], // pharmacy revenue/margin/valuation (UP-E)
 };
 
 // Numeric limits per plan (enforce separately from feature flags).
+// NOTE: limitsForPlan falls back to LIMITS.basic for any plan missing here, so a new
+// tier MUST have an entry or it would silently inherit Basic's caps (1 doctor/branch).
 const LIMITS = {
   basic: { maxDoctors: 1, maxBranches: 1 },
   standard: { maxDoctors: 5, maxBranches: 1 },
   premium: { maxDoctors: Infinity, maxBranches: Infinity },
+  ultra_premium: { maxDoctors: Infinity, maxBranches: Infinity }, // superset of premium
 };
 
 function planHasFeature(plan, featureKey) {
-  return (FEATURES[featureKey] || []).includes(plan);
+  const allowed = FEATURES[featureKey] || [];
+  if (allowed.includes(plan)) return true;
+  // ultra_premium is a strict SUPERSET of premium (spec §4): it inherits every premium
+  // feature without each one having to list 'ultra_premium'. This branch only fires for
+  // the new tier, so basic/standard/premium resolution is byte-for-byte unchanged — which
+  // makes the strict-superset guarantee structural (a premium feature can never be missed).
+  if (plan === 'ultra_premium' && allowed.includes('premium')) return true;
+  return false;
 }
 
 /**

@@ -10,7 +10,10 @@ const AppError = require('../utils/AppError');
  * dues, last activity) so the platform owner can actually SEE and ACT on a failing clinic, and a
  * force-plan-change lever for support. Not tenant-scoped by design.
  */
-const PLAN_PRICES = { basic: 999, standard: 1999, premium: 3999 }; // ₹/month (§12)
+// ₹/month for the super-admin MRR estimate (display only; real billing is via Razorpay/invoices).
+// ultra_premium is a placeholder mid-range price (pharmacy add-on, spec suggests ₹7,999–14,999) —
+// adjust when the tier's pricing is finalized.
+const PLAN_PRICES = { basic: 999, standard: 1999, premium: 3999, ultra_premium: 9999 };
 
 async function platformAnalytics() {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);

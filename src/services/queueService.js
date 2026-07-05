@@ -128,7 +128,7 @@ async function notifyPatientCalled(ctx, entry) {
   if (!patient?.phone || !comms.whatsappReady(clinic, patient)) return;
   const { sendNotification } = require('./notifications');
   const msg = `Hi ${patient.name || 'there'}, it’s your turn at ${clinic?.name || 'the clinic'} — please come to reception (token #${entry.tokenNumber}).`;
-  await sendNotification({ channel: 'whatsapp', to: patient.phone, message: msg });
+  await sendNotification({ channel: 'whatsapp', to: patient.phone, message: msg, urgent: true }); // real-time — skip the queue
   require('./messageLogService')
     .record({ clinicId: ctx.clinicId, actorId: 'system', actorRole: 'system' }, { patientId: patient._id, patientName: patient.name, channel: 'whatsapp', template: 'custom', subject: 'Your turn', to: patient.phone, status: 'sent' })
     .catch(() => {});

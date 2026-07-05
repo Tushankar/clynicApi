@@ -37,6 +37,9 @@ const notificationSchema = new mongoose.Schema(
         'review_received',
         'waitlist_joined',
         'waitlist_slot_freed',
+        // Pharmacy & Vendor module (Ultra Premium, §6.3) — stock health alerts to pharmacy staff.
+        'low_stock',
+        'stock_expiry',
         'other',
       ],
       default: 'other',

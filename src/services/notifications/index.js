@@ -17,10 +17,12 @@ const adapters = {
   whatsapp: whatsappAdapter,
 };
 
-async function sendNotification({ channel = config.notify.defaultChannel, to, message, subject, html, attachments } = {}) {
+async function sendNotification({ channel = config.notify.defaultChannel, to, message, subject, html, attachments, urgent = false } = {}) {
   const adapter = adapters[channel];
   if (!adapter) throw new Error(`No adapter for channel: ${channel}`);
-  return adapter.send({ to, message, subject, html, attachments });
+  // `urgent` lets the WhatsApp adapter skip its anti-ban send queue for time-critical messages
+  // (OTP, "you're next"); other adapters ignore it.
+  return adapter.send({ to, message, subject, html, attachments, urgent });
 }
 
 module.exports = { sendNotification, adapters, emailAdapter };

@@ -75,6 +75,7 @@ async function requestOtp(clinicId, contactRaw) {
       to: c.identifier,
       subject: 'Your verification code',
       message: `Your verification code is ${code}. It expires in ${config.otp.ttlMinutes} minutes.`,
+      urgent: true, // a patient is actively waiting to type this — skip the WhatsApp send queue
     });
   } catch (err) {
     // Email failures still surface (as before). For phone, if the channel isn't available

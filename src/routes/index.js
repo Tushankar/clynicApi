@@ -37,6 +37,7 @@ const waitlistRoutes = require('./waitlistRoutes');
 const recallRoutes = require('./recallRoutes');
 const expenseRoutes = require('./expenseRoutes');
 const exportRoutes = require('./exportRoutes');
+const pharmacyRoutes = require('./pharmacyRoutes'); // Ultra Premium pharmacy module (gated inside)
 
 const router = express.Router();
 
@@ -91,6 +92,7 @@ api.use('/waitlist', waitlistRoutes);
 api.use('/recalls', recallRoutes);
 api.use('/expenses', expenseRoutes);
 api.use('/export', exportRoutes);
+api.use('/pharmacy', pharmacyRoutes);
 
 router.use(api);
 

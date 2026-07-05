@@ -1,6 +1,6 @@
 'use strict';
 
-const { Appointment, Prescription, Report, ClinicalNote, Reminder, LabRequest } = require('../models');
+const { Appointment, Prescription, Report, ClinicalNote, Reminder, LabRequest, Dispense } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 
 /**
@@ -10,14 +10,17 @@ const { tenantRepo } = require('../lib/TenantRepository');
  * clinic-scoped (hard rules 1 + 6). Lab requests were previously missing here, so an ordered-
  * but-pending test dropped out of the history a returning doctor scans.
  */
-async function getTimeline(ctx, patientId) {
-  const [appts, rx, reports, notes, reminders, labs] = await Promise.all([
+async function getTimeline(ctx, patientId, { includePharmacy = false } = {}) {
+  const [appts, rx, reports, notes, reminders, labs, dispenses] = await Promise.all([
     tenantRepo(Appointment, ctx).find({ patientId }, { lean: true }),
     tenantRepo(Prescription, ctx).find({ patientId }, { lean: true }),
     tenantRepo(Report, ctx).find({ patientId }, { lean: true }),
     tenantRepo(ClinicalNote, ctx).find({ patientId }, { lean: true }),
     tenantRepo(Reminder, ctx, { audit: false }).find({ patientId }, { lean: true }),
     tenantRepo(LabRequest, ctx).find({ patientId }, { lean: true }),
+    // Pharmacy dispenses join the timeline ONLY for Ultra clinics (feature-gated branch, §4.5.1).
+    // Non-Ultra clinics never run this query, so their timeline stays byte-for-byte unchanged.
+    includePharmacy ? tenantRepo(Dispense, ctx).find({ patientId }, { lean: true }) : Promise.resolve([]),
   ]);
 
   const items = [];
@@ -27,6 +30,7 @@ async function getTimeline(ctx, patientId) {
   notes.forEach((n) => items.push({ type: 'note', date: n.createdAt, title: 'Clinical note', meta: (n.content || '').slice(0, 90), id: String(n._id) }));
   labs.forEach((l) => items.push({ type: 'lab', date: l.createdAt, title: `Lab — ${(l.tests || []).join(', ') || 'requested'}`, status: l.status, meta: l.status, id: String(l._id) }));
   reminders.forEach((rm) => items.push({ type: 'reminder', date: rm.sentAt || rm.sendAt, title: `Reminder · ${rm.type}`, meta: rm.status, id: String(rm._id) }));
+  dispenses.forEach((d) => items.push({ type: 'dispense', date: d.dispensedAt || d.createdAt, title: `Dispensed at pharmacy — ${d.items?.length || 0} medicine(s)`, meta: d.total ? `₹${Number(d.total).toLocaleString('en-IN')}` : undefined, id: String(d._id) }));
 
   items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   return items;

@@ -10,12 +10,20 @@
  * Clerk's built-in defaults are `org:admin` / `org:member`; for clinics that
  * still use the defaults we map `admin -> owner`. Anything unrecognized
  * resolves to null and will fail every RBAC guard (deny by default).
+ *
+ * Pharmacy roles (Ultra Premium module): `pharmacy_owner` and `pharmacy_manager` are
+ * additive staff roles configured as custom Clerk org roles ONLY for clinics that run the
+ * pharmacy add-on. Lower-tier clinics never configure `org:pharmacy_*`, so normalizeRole
+ * never yields them there; and even where present, tier isolation is enforced by the
+ * requireFeature('PHARMACY_*') gate, never by the role alone.
  */
 
 const ROLES = Object.freeze({
   OWNER: 'owner',
   DOCTOR: 'doctor',
   RECEPTIONIST: 'receptionist',
+  PHARMACY_OWNER: 'pharmacy_owner',
+  PHARMACY_MANAGER: 'pharmacy_manager',
 });
 
 const ALL_ROLES = Object.freeze(Object.values(ROLES));
