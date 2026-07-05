@@ -19,6 +19,12 @@ function repo(ctx) {
 }
 
 const trimTo = (v, max) => (v === undefined || v === null ? undefined : String(v).trim().slice(0, max));
+// Symptom tags accept an array or a comma-separated string; normalized to lowercased, de-duped tags.
+function normalizeTags(v) {
+  if (v === undefined || v === null) return undefined;
+  const arr = Array.isArray(v) ? v : String(v).split(',');
+  return [...new Set(arr.map((t) => String(t).trim().toLowerCase()).filter(Boolean))].slice(0, 20);
+}
 function clampNum(v, min, max, dflt) {
   const n = Number(v);
   if (!Number.isFinite(n)) return dflt;
@@ -124,6 +130,7 @@ async function update(ctx, id, body = {}) {
   setStr('hsnCode', 20);
   setStr('description', 2000);
   setStr('dosageInfo', 1000);
+  if (body.symptomTags !== undefined) update.symptomTags = normalizeTags(body.symptomTags) || [];
   if (body.form !== undefined) update.form = Medicine.FORMS.includes(body.form) ? body.form : 'other';
   if (body.unit !== undefined) update.unit = Medicine.UNITS.includes(body.unit) ? body.unit : 'unit';
   if (body.sku !== undefined) update.sku = String(body.sku || '').trim().slice(0, 60) || null;
