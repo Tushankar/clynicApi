@@ -1,6 +1,6 @@
 'use strict';
 
-const { Clinic, Subscription, Invoice, Payment, Appointment, Doctor } = require('../models');
+const { Clinic, Subscription, Invoice, Payment, Appointment, Doctor, Dispense, MedicineOrder } = require('../models');
 const { PLANS } = require('../config/plans');
 const AppError = require('../utils/AppError');
 
@@ -30,6 +30,19 @@ async function platformAnalytics() {
     Appointment.distinct('clinicId', { createdAt: { $gte: thirtyDaysAgo } }),
   ]);
 
+  // Pharmacy module rollup (Ultra Premium, §6.7) — additive platform-wide GMV across all clinics
+  // (cross-clinic by design: this is the super-admin surface). Zeros when no clinic runs a pharmacy.
+  const [pharmDispenseAgg, pharmOrderAgg] = await Promise.all([
+    Dispense.aggregate([
+      { $match: { deletedAt: null, dispensedAt: { $gte: thirtyDaysAgo } } },
+      { $group: { _id: null, amount: { $sum: '$total' }, count: { $sum: 1 } } },
+    ]),
+    MedicineOrder.aggregate([
+      { $match: { deletedAt: null, status: 'fulfilled', fulfilledAt: { $gte: thirtyDaysAgo } } },
+      { $group: { _id: null, amount: { $sum: '$subtotal' }, count: { $sum: 1 } } }, // ex-GST, matching Dispense.total
+    ]),
+  ]);
+
   const byPlan = byPlanAgg.reduce((acc, g) => ({ ...acc, [g._id || 'basic']: g.count }), {});
   const mrr = byPlanAgg.reduce((s, g) => s + (PLAN_PRICES[g._id] || 0) * g.count, 0);
   const subStatus = subByStatus.reduce((acc, g) => ({ ...acc, [g._id]: g.count }), {});
@@ -52,6 +65,12 @@ async function platformAnalytics() {
     // computed on a biased subset dominated by free/basic clinics.
     subscriptions: { byStatus: subStatus, pastDue: subStatus.past_due || 0, churnRate: totalClinics ? Math.round((cancelled / totalClinics) * 1000) / 10 : 0 },
     failedPayments,
+    // Pharmacy module (Ultra Premium) — 30-day GMV across counter dispenses + fulfilled store orders.
+    pharmacy: {
+      gmv30d: Math.round(((pharmDispenseAgg[0]?.amount || 0) + (pharmOrderAgg[0]?.amount || 0)) * 100) / 100,
+      dispenses30d: pharmDispenseAgg[0]?.count || 0,
+      storeOrders30d: pharmOrderAgg[0]?.count || 0,
+    },
     generatedAt: new Date().toISOString(),
   };
 }

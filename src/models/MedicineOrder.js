@@ -79,5 +79,6 @@ softDeletable(medicineOrderSchema);
 medicineOrderSchema.index({ clinicId: 1, patientId: 1, createdAt: -1 });
 medicineOrderSchema.index({ clinicId: 1, status: 1, createdAt: -1 });
 medicineOrderSchema.index({ clinicId: 1, verificationStatus: 1 });
+medicineOrderSchema.index({ status: 1, fulfilledAt: -1 }); // platform-wide (super-admin) GMV rollup
 
 module.exports = mongoose.model('MedicineOrder', medicineOrderSchema);

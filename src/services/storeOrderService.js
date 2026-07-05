@@ -43,12 +43,14 @@ function orderView(order, { paid } = {}) {
   return {
     id: String(o._id),
     orderNumber: o.orderNumber,
+    patientName: o.patientName || '',
     items: o.items,
     subtotal: o.subtotal,
     gstAmount: o.gstAmount,
     total: o.total,
     requiresPrescription: o.requiresPrescription,
     hasPrescription: !!(o.prescription && o.prescription.storageKey),
+    prescriptionMimeType: o.prescription && o.prescription.mimeType ? o.prescription.mimeType : null,
     verificationStatus: o.verificationStatus,
     rejectionReason: o.rejectionReason || null,
     status: o.status,
@@ -101,9 +103,11 @@ async function createOrder(ctx, patient, { items, contactPhone, deliveryAddress,
     patientName: patientDoc ? patientDoc.name : patient.email,
     patientEmail: patient.email,
     items: orderItems,
-    subtotal,
-    gstAmount,
-    total,
+    // Use the INVOICE's authoritative totals (what the patient is actually charged) so the order
+    // record can never drift from the invoice due to blended-rate rounding.
+    subtotal: invoice.subtotal,
+    gstAmount: invoice.gstAmount,
+    total: invoice.total,
     requiresPrescription,
     verificationStatus: requiresPrescription ? 'pending' : 'not_required',
     status: 'pending',
@@ -125,14 +129,20 @@ async function uploadPrescription(ctx, patient, orderId, file) {
   if (!ALLOWED_RX_MIME.test(file.mimetype || '')) throw new AppError(400, 'Upload a prescription image (JPG/PNG/WebP) or PDF');
   const order = await ownOrder(ctx, patient, orderId);
   if (order.status === 'cancelled') throw new AppError(400, 'This order is cancelled');
+  // Never let the Rx file change after fulfilment — that would corrupt the dispensing/audit record.
+  if (order.status === 'fulfilled') throw new AppError(400, 'This order has already been fulfilled');
   const key = `pharmacy/prescriptions/${ctx.clinicId}/${crypto.randomUUID()}-${safeName(file.originalname)}`;
   await storage.saveFile({ clinicId: ctx.clinicId, key, buffer: file.buffer, contentType: file.mimetype });
   const update = {
     prescription: { storageDriver: storage.driver, storageKey: key, originalName: safeName(file.originalname), mimeType: file.mimetype, size: file.size, uploadedAt: new Date() },
   };
-  // A previously rejected Rx that's re-uploaded goes back to pending for another pharmacist review.
-  if (order.requiresPrescription && ['pending', 'rejected'].includes(order.verificationStatus)) {
+  // Any (re)upload INVALIDATES prior review: the 'verified' flag must never outlive the file it
+  // certified (§5.3). Swapping the file — even after a pharmacist verified it — forces a fresh review,
+  // so fulfilment can never dispense against a prescription no pharmacist approved for THIS file.
+  if (order.requiresPrescription) {
     update.verificationStatus = 'pending';
+    update.verifiedBy = null;
+    update.verifiedAt = null;
     update.rejectionReason = '';
   }
   const saved = await tenantRepo(MedicineOrder, ctx).updateById(orderId, update);

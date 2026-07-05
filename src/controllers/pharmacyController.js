@@ -10,6 +10,7 @@ const dispenseService = require('../services/dispenseService');
 const dosageService = require('../services/pharmacyDosageService');
 const storeOpsService = require('../services/storeOpsService');
 const storeCategoryService = require('../services/storeCategoryService');
+const reportsService = require('../services/pharmacyReportsService');
 
 /* ------------------------------- Medicines (catalog) ------------------------------- */
 
@@ -170,6 +171,12 @@ const uploadStoreCategoryImage = asyncHandler(async (req, res) => {
   res.json(await storeCategoryService.uploadImage(req.ctx, req.params.id, req.file));
 });
 
+/* ------------------------------- Pharmacy reports (UP-E) ------------------------------- */
+
+const pharmacyReports = asyncHandler(async (req, res) => {
+  res.json(await reportsService.overview(req.ctx, { from: req.query.from, to: req.query.to }));
+});
+
 module.exports = {
   listMedicines,
   getMedicine,
@@ -220,4 +227,6 @@ module.exports = {
   updateStoreCategory,
   removeStoreCategory,
   uploadStoreCategoryImage,
+  // UP-E — reports
+  pharmacyReports,
 };

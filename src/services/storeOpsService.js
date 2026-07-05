@@ -79,7 +79,18 @@ async function fulfill(ctx, id) {
   // Must be paid (settled through the linked invoice) before handing stock over.
   if (!(await storeOrderService.invoicePaid(ctx, order.invoiceId))) throw new AppError(400, 'This order is not paid yet');
 
-  // FEFO deduction (atomic, concurrency-safe, no-oversell, no-expired) with rollback — same engine as dispensing.
+  // Atomically CLAIM fulfilment BEFORE deducting stock: only the request that flips the status from a
+  // non-terminal state wins, so two concurrent fulfils (a double-click, or two staff on the queue) can
+  // never both deduct. The per-batch decrements only prevent oversell — this prevents double-deduct.
+  const prevStatus = order.status;
+  const claim = await MedicineOrder.updateOne(
+    { _id: order._id, clinicId: ctx.clinicId, status: { $in: ['pending', 'verified'] } },
+    { $set: { status: 'fulfilled', fulfilledBy: ctx.actorId || null, fulfilledAt: new Date() } }
+  );
+  if (!claim.modifiedCount) throw new AppError(409, 'This order is already being fulfilled');
+
+  // FEFO deduction (atomic, no-oversell, no-expired). On any failure roll back stock AND revert the
+  // claim so the order can be retried cleanly.
   const allAllocations = [];
   const perItem = [];
   try {
@@ -91,6 +102,7 @@ async function fulfill(ctx, id) {
     }
   } catch (err) {
     await dispenseService.rollbackAllocations(ctx, allAllocations);
+    await MedicineOrder.updateOne({ _id: order._id, clinicId: ctx.clinicId }, { $set: { status: prevStatus, fulfilledBy: null, fulfilledAt: null } }).catch(() => {});
     throw err;
   }
 
@@ -98,13 +110,7 @@ async function fulfill(ctx, id) {
     medicineId: it.medicineId, medicineName: it.medicineName, unit: it.unit, qty: it.qty,
     unitPrice: it.unitPrice, gstRate: it.gstRate, prescriptionRequired: it.prescriptionRequired, allocations: perItem[i],
   }));
-  let saved;
-  try {
-    saved = await repo(ctx).updateById(id, { status: 'fulfilled', fulfilledBy: ctx.actorId || null, fulfilledAt: new Date(), items });
-  } catch (err) {
-    await dispenseService.rollbackAllocations(ctx, allAllocations); // put stock back if the record write fails
-    throw err;
-  }
+  const saved = await repo(ctx).updateById(id, { items }); // status already committed by the atomic claim
   for (const mid of [...new Set(order.items.map((i) => String(i.medicineId)))]) alertService.checkMedicine(ctx, mid).catch(() => {});
   notificationService.emit(ctx, { type: 'order_status', message: `Your order ${order.orderNumber} is ready`, recipientType: 'patient', recipientId: String(order.patientId) }).catch(() => {});
   return storeOrderService.orderView(saved);

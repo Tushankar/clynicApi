@@ -28,6 +28,7 @@ router.use('/dispenses', requireFeature('MEDICINE_DISPENSING'));
 router.use('/dosage', requireFeature('DOSAGE_MANAGEMENT'));
 router.use('/orders', requireFeature('PHARMACY_STOREFRONT'));
 router.use('/store-categories', requireFeature('PHARMACY_STOREFRONT'));
+router.use('/reports', requireFeature('PHARMACY_ANALYTICS'));
 
 // Clinic owner runs the pharmacy alongside the dedicated pharmacy roles; managers do day-to-day.
 const PHARMACY_STAFF = ['owner', 'pharmacy_owner', 'pharmacy_manager'];
@@ -88,6 +89,10 @@ router.post('/orders/:id/verify', requireRole(...PHARMACY_STAFF), ctrl.verifySto
 router.post('/orders/:id/reject', requireRole(...PHARMACY_STAFF), ctrl.rejectStoreOrder);
 router.post('/orders/:id/fulfill', requireRole(...PHARMACY_STAFF), ctrl.fulfillStoreOrder);
 router.post('/orders/:id/cancel', requireRole(...PHARMACY_ADMINS), ctrl.cancelStoreOrder);
+
+// ---- Pharmacy reports — PHARMACY_ANALYTICS. FINANCIAL data → owner-level only (spec §3:
+// pharmacy managers get no financial reports), unlike the day-to-day PHARMACY_STAFF routes. ----
+router.get('/reports', requireRole(...PHARMACY_ADMINS), ctrl.pharmacyReports);
 
 // ---- Storefront categories — PHARMACY_STOREFRONT ----
 router.get('/store-categories', requireRole(...PHARMACY_STAFF), ctrl.listStoreCategories);

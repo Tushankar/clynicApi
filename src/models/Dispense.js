@@ -61,5 +61,6 @@ branchAware(dispenseSchema);
 softDeletable(dispenseSchema);
 dispenseSchema.index({ clinicId: 1, patientId: 1, createdAt: -1 });
 dispenseSchema.index({ clinicId: 1, prescriptionId: 1 });
+dispenseSchema.index({ dispensedAt: -1 }); // platform-wide (super-admin) GMV rollup
 
 module.exports = mongoose.model('Dispense', dispenseSchema);

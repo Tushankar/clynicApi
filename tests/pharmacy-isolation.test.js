@@ -665,3 +665,100 @@ test('(6g) storefront routes are gated (requireFeature units) for non-Ultra tier
   assert.equal(run('ultra_premium'), 'pass');
   console.log('  ✓ (6g) PHARMACY_STOREFRONT 403 for non-Ultra, pass for Ultra');
 });
+
+test('(6h) re-uploading a prescription after verification invalidates it (Rx gate cannot be bypassed by a file swap)', async () => {
+  await seedClinics();
+  const rxMed = await medicineService.create(ctxA, { name: 'Controlled Med', sellingPrice: 30, scheduleClass: 'H1' });
+  await inventoryService.createBatch(ctxA, { medicineId: rxMed._id, expiryDate: '2035-01-01', quantityInStock: 50 });
+  const patient = await makeStorePatient(ctxA);
+  const order = await storeOrderService.createOrder(ctxA, patient, { items: [{ medicineId: rxMed._id, qty: 1 }] });
+  const orderDoc = await MedicineOrder.findOne({ clinicId: ctxA.clinicId }).lean();
+  await invoiceService.recordPayment(ctxA, orderDoc.invoiceId, { amount: order.total, method: 'cash' });
+  await storeOrderService.uploadPrescription(ctxA, patient, orderDoc._id, FAKE_RX);
+  await storeOpsService.verifyRx(ctxA, orderDoc._id); // pharmacist approves THIS file
+  assert.equal((await MedicineOrder.findById(orderDoc._id).lean()).verificationStatus, 'verified');
+  // Patient swaps the file after approval → verification must reset to pending.
+  await storeOrderService.uploadPrescription(ctxA, patient, orderDoc._id, { ...FAKE_RX, originalname: 'swapped.jpg' });
+  assert.equal((await MedicineOrder.findById(orderDoc._id).lean()).verificationStatus, 'pending', 're-upload reset to pending');
+  // Fulfilment is blocked again until re-verified.
+  await assert.rejects(() => storeOpsService.fulfill(ctxA, orderDoc._id), /prescription must be verified/i);
+  console.log('  ✓ (6h) swapping the Rx after verification forces re-review; fulfilment blocked until re-verified');
+});
+
+test('(6i) fulfil is atomic — concurrent fulfils do not double-deduct stock', async () => {
+  await seedClinics();
+  const otc = await medicineService.create(ctxA, { name: 'Bulk OTC', sellingPrice: 5 });
+  await inventoryService.createBatch(ctxA, { medicineId: otc._id, expiryDate: '2035-01-01', quantityInStock: 20 });
+  const patient = await makeStorePatient(ctxA);
+  const order = await storeOrderService.createOrder(ctxA, patient, { items: [{ medicineId: otc._id, qty: 5 }] });
+  const orderDoc = await MedicineOrder.findOne({ clinicId: ctxA.clinicId }).lean();
+  await invoiceService.recordPayment(ctxA, orderDoc.invoiceId, { amount: order.total, method: 'cash' });
+  const results = await Promise.allSettled([storeOpsService.fulfill(ctxA, orderDoc._id), storeOpsService.fulfill(ctxA, orderDoc._id)]);
+  const ok = results.filter((r) => r.status === 'fulfilled').length;
+  assert.equal(ok, 1, 'exactly one concurrent fulfil succeeds');
+  assert.equal((await medicineService.get(ctxA, otc._id)).available, 15, 'stock deducted exactly once (20-5), never twice');
+  console.log('  ✓ (6i) concurrent fulfils: one wins, stock deducted once (atomic claim)');
+});
+
+/* ===================== Part 7 — UP-E pharmacy analytics ==================== */
+
+test('(7a) reports: revenue/COGS/margin from dispense + fulfilled order allocations; expenses; net; top medicines', async () => {
+  const reportsService = require('../src/services/pharmacyReportsService');
+  await seedClinics();
+  // Medicine sells at ₹10 (no GST for clean math); the batch cost ₹4/unit.
+  const med = await medicineService.create(ctxA, { name: 'Margin Med', sellingPrice: 10, gstRate: 0 });
+  await inventoryService.createBatch(ctxA, { medicineId: med._id, expiryDate: '2035-01-01', quantityInStock: 100, purchaseUnitCost: 4 });
+
+  // Counter dispense: 5 units → revenue 50, COGS 20.
+  const patientRec = await tenantRepo(Patient, ctxA).create({ name: 'Rpt Patient', patientCode: 'RPT1' });
+  const rx = await tenantRepo(Prescription, ctxA).create({ patientId: patientRec._id, doctorId: new mongoose.Types.ObjectId(), patientName: 'Rpt Patient', items: [{ drug: 'Margin Med' }] });
+  await dispenseService.dispense(ctxA, { prescriptionId: rx._id, items: [{ medicineId: med._id, qty: 5, unitPrice: 10 }] });
+
+  // Online order: 3 units → revenue 30, COGS 12 (fulfil after paying).
+  const patient = await makeStorePatient(ctxA, 'rpt@example.com');
+  const order = await storeOrderService.createOrder(ctxA, patient, { items: [{ medicineId: med._id, qty: 3 }] });
+  const orderDoc = await MedicineOrder.findOne({ clinicId: ctxA.clinicId }).lean();
+  await invoiceService.recordPayment(ctxA, orderDoc.invoiceId, { amount: order.total, method: 'cash' });
+  await storeOpsService.fulfill(ctxA, orderDoc._id);
+
+  // Operating expense ₹100.
+  await expenseService.create(ctxA, { amount: 100, category: 'rent', note: 'rent' });
+
+  const r = await reportsService.overview(ctxA, {});
+  assert.equal(r.sales.revenue, 80, 'revenue = 50 (dispense) + 30 (order), ex-GST');
+  assert.equal(r.sales.cogs, 32, 'COGS = 8 units × ₹4 batch cost, from the recorded allocations');
+  assert.equal(r.sales.grossMargin, 48, 'gross margin = 80 − 32');
+  assert.equal(r.sales.marginPct, 60, '48/80');
+  assert.equal(r.expenses.other, 100);
+  assert.equal(r.net, -52, 'net = gross margin 48 − other expenses 100');
+  assert.equal(r.sales.dispenses, 1);
+  assert.equal(r.sales.fulfilledOrders, 1);
+  assert.equal(r.topMedicines.length, 1);
+  assert.equal(r.topMedicines[0].qty, 8, 'top medicine merges both channels');
+  assert.equal(r.topMedicines[0].margin, 48);
+  assert.equal(r.trend.length, 6, 'six monthly buckets');
+  const thisMonth = r.trend[r.trend.length - 1];
+  assert.equal(thisMonth.revenue, 80, 'current month trend revenue');
+  assert.ok(r.stock.stockValue > 0, 'stock valuation present');
+  console.log('  ✓ (7a) reports: revenue 80, COGS 32 (from FEFO allocations), margin 48/60%, net −52, trend + top medicines correct');
+});
+
+test('(7b) reports are tenant-isolated and owner-level (managers get 403)', async () => {
+  const reportsService = require('../src/services/pharmacyReportsService');
+  await seedClinics();
+  // Clinic B (premium) has no pharmacy data; clinic A's numbers must not bleed into a B report.
+  const rB = await reportsService.overview({ clinicId: ctxP.clinicId, actorId: 'x', actorRole: 'owner' }, {});
+  assert.equal(rB.sales.revenue, 0, 'other clinic sees zero revenue (no bleed)');
+  assert.equal(rB.topMedicines.length, 0);
+
+  // RBAC: the /reports route allows only owner + pharmacy_owner (spec §3 — managers get no financials).
+  const { requireRole } = require('../src/middleware/requireRole');
+  const guard = requireRole('owner', 'pharmacy_owner');
+  let denied = null;
+  guard({ auth: { role: 'pharmacy_manager' } }, {}, (err) => { denied = err; });
+  assert.ok(denied && denied.statusCode === 403, 'pharmacy_manager is denied financial reports');
+  let allowed = 'blocked';
+  guard({ auth: { role: 'pharmacy_owner' } }, {}, (err) => { allowed = err || 'ok'; });
+  assert.equal(allowed, 'ok', 'pharmacy_owner passes');
+  console.log('  ✓ (7b) reports clinic-scoped; owner-level RBAC (manager 403, pharmacy_owner ok)');
+});
