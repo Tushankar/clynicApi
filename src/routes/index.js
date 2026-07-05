@@ -38,6 +38,8 @@ const recallRoutes = require('./recallRoutes');
 const expenseRoutes = require('./expenseRoutes');
 const exportRoutes = require('./exportRoutes');
 const pharmacyRoutes = require('./pharmacyRoutes'); // Ultra Premium pharmacy module (gated inside)
+const storePublicRoutes = require('./storePublicRoutes'); // Ultra Premium public storefront (browse + OTP)
+const storeRoutes = require('./storeRoutes'); // Ultra Premium storefront order flow (patient session)
 
 const router = express.Router();
 
@@ -57,6 +59,10 @@ router.use('/files', fileRoutes);
 router.post('/payments/webhook', paymentController.webhook);
 // Patient portal — patient session tokens (not Clerk); mounted before the Clerk gate.
 router.use('/portal', portalRoutes);
+// Pharmacy storefront (Ultra Premium, §6.6) — PUBLIC (no Clerk). Public browse is slug-scoped and
+// Ultra-404-gated in the service; the authed order flow uses the patient session (storePatientAuth).
+router.use('/public/c/:slug/store', storePublicRoutes);
+router.use('/store', storeRoutes);
 
 // ---- Protected (every route below requires a resolved clinic context) -------
 const api = express.Router();

@@ -8,6 +8,8 @@ const purchaseOrderService = require('../services/pharmacyPurchaseOrderService')
 const expenseService = require('../services/pharmacyExpenseService');
 const dispenseService = require('../services/dispenseService');
 const dosageService = require('../services/pharmacyDosageService');
+const storeOpsService = require('../services/storeOpsService');
+const storeCategoryService = require('../services/storeCategoryService');
 
 /* ------------------------------- Medicines (catalog) ------------------------------- */
 
@@ -128,6 +130,46 @@ const listDosage = asyncHandler(async (req, res) => {
   res.json(await dosageService.listForPatient(req.ctx, req.query.patientId));
 });
 
+/* ----------------------------- Storefront order queue (UP-D) ----------------------------- */
+
+const listStoreOrders = asyncHandler(async (req, res) => {
+  res.json(await storeOpsService.list(req.ctx, { status: req.query.status, verificationStatus: req.query.verificationStatus }));
+});
+const getStoreOrder = asyncHandler(async (req, res) => {
+  res.json(await storeOpsService.get(req.ctx, req.params.id));
+});
+const verifyStoreOrder = asyncHandler(async (req, res) => {
+  res.json(await storeOpsService.verifyRx(req.ctx, req.params.id));
+});
+const rejectStoreOrder = asyncHandler(async (req, res) => {
+  res.json(await storeOpsService.rejectRx(req.ctx, req.params.id, req.body.reason));
+});
+const fulfillStoreOrder = asyncHandler(async (req, res) => {
+  res.json(await storeOpsService.fulfill(req.ctx, req.params.id));
+});
+const cancelStoreOrder = asyncHandler(async (req, res) => {
+  res.json(await storeOpsService.cancel(req.ctx, req.params.id, req.body.reason));
+});
+
+/* ----------------------------- Storefront categories (UP-D) ----------------------------- */
+
+const listStoreCategories = asyncHandler(async (req, res) => {
+  res.json(await storeCategoryService.list(req.ctx));
+});
+const createStoreCategory = asyncHandler(async (req, res) => {
+  res.status(201).json(await storeCategoryService.create(req.ctx, req.body));
+});
+const updateStoreCategory = asyncHandler(async (req, res) => {
+  res.json(await storeCategoryService.update(req.ctx, req.params.id, req.body));
+});
+const removeStoreCategory = asyncHandler(async (req, res) => {
+  await storeCategoryService.remove(req.ctx, req.params.id);
+  res.json({ ok: true });
+});
+const uploadStoreCategoryImage = asyncHandler(async (req, res) => {
+  res.json(await storeCategoryService.uploadImage(req.ctx, req.params.id, req.file));
+});
+
 module.exports = {
   listMedicines,
   getMedicine,
@@ -165,4 +207,17 @@ module.exports = {
   listDispenses,
   getDispense,
   listDosage,
+  // UP-D — storefront order queue
+  listStoreOrders,
+  getStoreOrder,
+  verifyStoreOrder,
+  rejectStoreOrder,
+  fulfillStoreOrder,
+  cancelStoreOrder,
+  // UP-D — storefront categories
+  listStoreCategories,
+  createStoreCategory,
+  updateStoreCategory,
+  removeStoreCategory,
+  uploadStoreCategoryImage,
 };

@@ -2,6 +2,7 @@
 
 const { Clinic, Doctor } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
+const { planHasFeature } = require('../config/plans');
 const config = require('../config/env');
 const AppError = require('../utils/AppError');
 
@@ -41,6 +42,9 @@ function buildSite(clinic, doctors) {
   const logoUrl = imageUrl(t.logoUrl) || imageUrl(clinic.logoUrl) || ''; // http(s) only — no data:/javascript:
   return {
     clinic: { name: clinic.name, slug: clinic.slug, phone: clinic.phone || '', address: clinic.address || '' },
+    // Ultra-Premium online store availability (§6.6). ADDITIVE boolean flag only (mirrors the `ai:`
+    // flag pattern) — non-Ultra clinics get `false` and an otherwise byte-for-byte-identical payload.
+    store: planHasFeature(clinic.subscriptionPlan, 'PHARMACY_STOREFRONT'),
     template: TEMPLATES.includes(w.template) ? w.template : 'premium-signature',
     theme: { primaryColor: hexColor(t.primaryColor) || DEFAULT_PRIMARY, accentColor: hexColor(t.accentColor) || DEFAULT_ACCENT, logoUrl },
     content: {

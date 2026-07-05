@@ -134,6 +134,9 @@ let Prescription;
 let Dispense;
 let DosageSchedule;
 let Invoice;
+let Clinic;
+let MedicineCategory;
+let MedicineOrder;
 let tenantRepo;
 let medicineService;
 let inventoryService;
@@ -142,6 +145,11 @@ let purchaseOrderService;
 let expenseService;
 let dispenseService;
 let timelineService;
+let invoiceService;
+let storeService;
+let storeOrderService;
+let storeOpsService;
+let websiteService;
 
 const ctxA = { clinicId: 'org_ultraA', actorId: 'user_a1', actorRole: 'pharmacy_owner' };
 const ctxB = { clinicId: 'org_ultraB', actorId: 'user_b1', actorRole: 'pharmacy_owner' };
@@ -149,7 +157,7 @@ const ctxB = { clinicId: 'org_ultraB', actorId: 'user_b1', actorRole: 'pharmacy_
 before(async () => {
   const { MongoMemoryServer } = require('mongodb-memory-server');
   mongoose = require('mongoose');
-  ({ Medicine, InventoryBatch, AuditLog, Supplier, PurchaseOrder, PharmacyExpense, Patient, Prescription, Dispense, DosageSchedule, Invoice } = require('../src/models'));
+  ({ Medicine, InventoryBatch, AuditLog, Supplier, PurchaseOrder, PharmacyExpense, Patient, Prescription, Dispense, DosageSchedule, Invoice, Clinic, MedicineCategory, MedicineOrder } = require('../src/models'));
   ({ tenantRepo } = require('../src/lib/TenantRepository'));
   medicineService = require('../src/services/pharmacyMedicineService');
   inventoryService = require('../src/services/pharmacyInventoryService');
@@ -158,6 +166,11 @@ before(async () => {
   expenseService = require('../src/services/pharmacyExpenseService');
   dispenseService = require('../src/services/dispenseService');
   timelineService = require('../src/services/timelineService');
+  invoiceService = require('../src/services/invoiceService');
+  storeService = require('../src/services/storeService');
+  storeOrderService = require('../src/services/storeOrderService');
+  storeOpsService = require('../src/services/storeOpsService');
+  websiteService = require('../src/services/websiteService');
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri());
   await Medicine.init();
@@ -171,6 +184,9 @@ before(async () => {
   await Dispense.init();
   await DosageSchedule.init();
   await Invoice.init();
+  await Clinic.init();
+  await MedicineCategory.init();
+  await MedicineOrder.init();
 });
 
 after(async () => {
@@ -190,6 +206,9 @@ beforeEach(async () => {
   await Dispense.deleteMany({});
   await DosageSchedule.deleteMany({});
   await Invoice.deleteMany({});
+  await Clinic.deleteMany({});
+  await MedicineCategory.deleteMany({});
+  await MedicineOrder.deleteMany({});
 });
 
 // ---- UP-C helpers: seed a patient + prescription + a stocked medicine ----
@@ -531,4 +550,118 @@ test('(5g) dispense is idempotent by clientToken — a retry never double-deduct
   await dispenseService.dispense(ctxA, { prescriptionId: rx._id, clientToken: 'tok-different', items: [{ medicineId: med._id, qty: 3, unitPrice: 10 }] });
   assert.equal((await medicineService.get(ctxA, med._id)).available, 12, 'a fresh token dispenses again');
   console.log('  ✓ (5g) same clientToken → idempotent no-op; a new token dispenses again');
+});
+
+/* ===================== Part 6 — UP-D storefront ==================== */
+
+// ctxA is the Ultra clinic (org_ultraA). Add a Premium clinic to prove non-Ultra has no store.
+const ctxP = { clinicId: 'org_premium', actorId: 'user_p1', actorRole: 'owner' };
+async function seedClinics() {
+  // website.published:true so getPublicSite serves the site (an unpublished site returns available:false).
+  await Clinic.create({ clinicId: ctxA.clinicId, name: 'Ultra Clinic A', slug: 'ultra-a', subscriptionPlan: 'ultra_premium', website: { published: true } });
+  await Clinic.create({ clinicId: ctxP.clinicId, name: 'Premium Clinic P', slug: 'prem-p', subscriptionPlan: 'premium', website: { published: true } });
+}
+async function makeStorePatient(ctx, email = 'buyer@example.com') {
+  const p = await tenantRepo(Patient, ctx).create({ name: 'Buyer', patientCode: `SP-${email}`, email });
+  return { patientId: String(p._id), email, clinicId: ctx.clinicId };
+}
+const FAKE_RX = { buffer: Buffer.from('rximage'), originalname: 'rx.jpg', mimetype: 'image/jpeg', size: 7 };
+
+test('(6a) public store is Ultra-404-gated and tenant-isolated', async () => {
+  await seedClinics();
+  await medicineService.create(ctxA, { name: 'Cough Syrup A', sellingPrice: 50, gstRate: 5, symptomTags: ['cough'] });
+  await medicineService.create(ctxP, { name: 'Premium-only Med', sellingPrice: 50 });
+  // Non-Ultra clinic: the store simply does not exist (404 hide).
+  await assert.rejects(() => storeService.home('prem-p'), /not available/i, 'non-Ultra store is 404-hidden');
+  // Ultra clinic: store resolves and shows only its OWN featured products.
+  const home = await storeService.home('ultra-a');
+  assert.equal(home.store.slug, 'ultra-a');
+  assert.equal(home.featured.length, 1, 'clinic A store shows only clinic A products (no bleed)');
+  assert.equal(home.featured[0].name, 'Cough Syrup A');
+  console.log('  ✓ (6a) store 404-hidden for non-Ultra; Ultra store tenant-isolated');
+});
+
+test('(6b) buildSite exposes `store` flag: true for Ultra, false for non-Ultra (payload otherwise unchanged)', async () => {
+  await seedClinics();
+  const ultra = await websiteService.getPublicSite('ultra-a');
+  const prem = await websiteService.getPublicSite('prem-p');
+  assert.equal(ultra.available, true);
+  assert.equal(ultra.site.store, true, 'Ultra site advertises the store');
+  assert.equal(prem.site.store, false, 'non-Ultra site has store:false');
+  // The flag is the ONLY store-related addition — all other site fields exist unchanged.
+  assert.ok(prem.site.clinic && prem.site.template && prem.site.theme && prem.site.content, 'non-Ultra site payload otherwise intact');
+  console.log('  ✓ (6b) store flag true/false by tier; non-Ultra site payload otherwise unchanged');
+});
+
+test('(6c) symptom browse surfaces OTC/wellness only — never Rx-by-symptom (§5.4)', async () => {
+  await seedClinics();
+  await medicineService.create(ctxA, { name: 'Vitamin C (OTC)', sellingPrice: 20, symptomTags: ['immunity'], scheduleClass: 'OTC' });
+  await medicineService.create(ctxA, { name: 'Rx Antibiotic', sellingPrice: 40, symptomTags: ['immunity'], scheduleClass: 'H1' }); // Rx (forced prescriptionRequired)
+  const res = await storeService.symptomItems('ultra-a', 'immunity');
+  const names = res.items.map((i) => i.name);
+  assert.ok(names.includes('Vitamin C (OTC)'), 'OTC medicine surfaced by symptom');
+  assert.ok(!names.includes('Rx Antibiotic'), 'Rx medicine NEVER surfaced by symptom');
+  console.log('  ✓ (6c) symptom browse is OTC-only; Rx-by-symptom never shown');
+});
+
+test('(6d) order creation makes a GST invoice and flags Rx correctly', async () => {
+  await seedClinics();
+  const otc = await medicineService.create(ctxA, { name: 'Paracetamol OTC', sellingPrice: 10, gstRate: 12 });
+  await inventoryService.createBatch(ctxA, { medicineId: otc._id, expiryDate: '2035-01-01', quantityInStock: 100 });
+  const patient = await makeStorePatient(ctxA);
+  const order = await storeOrderService.createOrder(ctxA, patient, { items: [{ medicineId: otc._id, qty: 3 }] });
+  assert.match(order.orderNumber, /^ORD\d{5}$/);
+  assert.equal(order.requiresPrescription, false);
+  assert.equal(order.verificationStatus, 'not_required');
+  assert.equal(order.total, 33.6, '3×₹10 + 12% GST');
+  const inv = await Invoice.findById((await MedicineOrder.findOne({ clinicId: ctxA.clinicId }).lean()).invoiceId).lean();
+  assert.equal(inv.total, 33.6, 'GST invoice created and linked');
+  console.log('  ✓ (6d) order → linked GST invoice; OTC order needs no prescription');
+});
+
+test('(6e) Rx enforcement — an Rx order cannot be fulfilled until the prescription is verified (§5.3 / §14)', async () => {
+  await seedClinics();
+  const rxMed = await medicineService.create(ctxA, { name: 'Rx Med', sellingPrice: 20, gstRate: 0, scheduleClass: 'H' });
+  await inventoryService.createBatch(ctxA, { medicineId: rxMed._id, expiryDate: '2035-01-01', quantityInStock: 50 });
+  const patient = await makeStorePatient(ctxA);
+  const order = await storeOrderService.createOrder(ctxA, patient, { items: [{ medicineId: rxMed._id, qty: 2 }] });
+  assert.equal(order.requiresPrescription, true);
+  assert.equal(order.verificationStatus, 'pending');
+  // Pay it (simulate a settled invoice) so the ONLY remaining blocker is the Rx.
+  const orderDoc = await MedicineOrder.findOne({ clinicId: ctxA.clinicId }).lean();
+  await invoiceService.recordPayment(ctxA, orderDoc.invoiceId, { amount: order.total, method: 'cash' });
+  // Cannot fulfil an Rx order that isn't verified.
+  await assert.rejects(() => storeOpsService.fulfill(ctxA, orderDoc._id), /prescription must be verified/i);
+  // Cannot verify without an uploaded prescription.
+  await assert.rejects(() => storeOpsService.verifyRx(ctxA, orderDoc._id), /no prescription/i);
+  // Upload → verify → fulfil deducts stock.
+  await storeOrderService.uploadPrescription(ctxA, patient, orderDoc._id, FAKE_RX);
+  await storeOpsService.verifyRx(ctxA, orderDoc._id);
+  const fulfilled = await storeOpsService.fulfill(ctxA, orderDoc._id);
+  assert.equal(fulfilled.status, 'fulfilled');
+  assert.equal((await medicineService.get(ctxA, rxMed._id)).available, 48, 'fulfilment deducted 2 units FEFO');
+  console.log('  ✓ (6e) Rx order blocked until prescription uploaded + verified, then fulfils & deducts stock');
+});
+
+test('(6f) fulfilment requires payment', async () => {
+  await seedClinics();
+  const otc = await medicineService.create(ctxA, { name: 'ORS OTC', sellingPrice: 10 });
+  await inventoryService.createBatch(ctxA, { medicineId: otc._id, expiryDate: '2035-01-01', quantityInStock: 20 });
+  const patient = await makeStorePatient(ctxA);
+  const order = await storeOrderService.createOrder(ctxA, patient, { items: [{ medicineId: otc._id, qty: 2 }] });
+  const orderDoc = await MedicineOrder.findOne({ clinicId: ctxA.clinicId }).lean();
+  await assert.rejects(() => storeOpsService.fulfill(ctxA, orderDoc._id), /not paid/i, 'unpaid order cannot be fulfilled');
+  await invoiceService.recordPayment(ctxA, orderDoc.invoiceId, { amount: order.total, method: 'cash' });
+  const ok = await storeOpsService.fulfill(ctxA, orderDoc._id);
+  assert.equal(ok.status, 'fulfilled');
+  console.log('  ✓ (6f) unpaid order blocked; fulfils once paid');
+});
+
+test('(6g) storefront routes are gated (requireFeature units) for non-Ultra tiers', () => {
+  const { requireFeature } = require('../src/middleware/requireFeature');
+  const guard = requireFeature('PHARMACY_STOREFRONT');
+  const run = (plan) => { let s = null; let n = false; guard({ clinic: { subscriptionPlan: plan } }, { status(c) { s = c; return this; }, json() { return this; } }, () => { n = true; }); return n ? 'pass' : s; };
+  for (const plan of ['basic', 'standard', 'premium']) assert.equal(run(plan), 403, `${plan} must 403`);
+  assert.equal(run('ultra_premium'), 'pass');
+  console.log('  ✓ (6g) PHARMACY_STOREFRONT 403 for non-Ultra, pass for Ultra');
 });

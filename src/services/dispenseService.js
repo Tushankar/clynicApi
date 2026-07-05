@@ -238,4 +238,4 @@ async function getById(ctx, id) {
   return d;
 }
 
-module.exports = { dispense, list, getById, allocateFEFO };
+module.exports = { dispense, list, getById, allocateFEFO, rollbackAllocations: rollback };

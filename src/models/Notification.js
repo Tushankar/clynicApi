@@ -40,6 +40,9 @@ const notificationSchema = new mongoose.Schema(
         // Pharmacy & Vendor module (Ultra Premium, §6.3) — stock health alerts to pharmacy staff.
         'low_stock',
         'stock_expiry',
+        // Pharmacy storefront (Ultra Premium, §6.6) — new order (→ staff), order status (→ patient).
+        'store_order',
+        'order_status',
         'other',
       ],
       default: 'other',
