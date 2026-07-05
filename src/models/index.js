@@ -43,4 +43,7 @@ module.exports = {
   // Pharmacy & Vendor module (Ultra Premium) — UP-C (dispensing & dosage)
   Dispense: require('./Dispense'),
   DosageSchedule: require('./DosageSchedule'),
+  // Pharmacy & Vendor module (Ultra Premium) — UP-D (storefront)
+  MedicineCategory: require('./MedicineCategory'),
+  MedicineOrder: require('./MedicineOrder'),
 };

@@ -84,6 +84,7 @@ async function create(ctx, body = {}) {
     brand: trimTo(body.brand, 200),
     composition: trimTo(body.composition, 300),
     category: trimTo(body.category, 120),
+    symptomTags: normalizeTags(body.symptomTags),
     form: Medicine.FORMS.includes(body.form) ? body.form : 'other',
     strength: trimTo(body.strength, 60),
     unit: Medicine.UNITS.includes(body.unit) ? body.unit : 'unit',
