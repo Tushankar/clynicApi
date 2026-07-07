@@ -40,7 +40,10 @@ const ctxAOwner = { clinicId: 'org_A', actorId: 'user_owner_a', actorRole: 'owne
 const ctxARecep = { clinicId: 'org_A', actorId: 'user_recep_a', actorRole: 'receptionist' };
 const ctxB = { clinicId: 'org_B', actorId: 'user_owner_b', actorRole: 'owner' };
 
-const WIN = [{ start: '09:00', end: '18:00' }];
+// Full-day window so these tests (which book at wall-clock-relative times) exercise reminders /
+// isolation independent of the server-side working-hours guard added in appointmentService.book.
+// The guard itself is covered deterministically by its own test below with a 09:00–18:00 doctor.
+const WIN = [{ start: '00:00', end: '23:59' }];
 const AVAIL = { mon: WIN, tue: WIN, wed: WIN, thu: WIN, fri: WIN, sat: WIN, sun: WIN };
 
 let mongod;
@@ -303,4 +306,50 @@ test('[fix] a reminder already sent is not re-opened/re-sent on reschedule (no d
   assert.equal(emailAdapter.getSentLog().length, 0, 'no duplicate emails');
 
   console.log('  ✓ [fix] sent reminders are never re-opened on reschedule (idempotent delivery)');
+});
+
+test('[guard] working hours are enforced server-side for scheduled bookings (walk-ins & no-hours doctors exempt)', async () => {
+  const HOURS = [{ start: '09:00', end: '18:00' }];
+  const drHours = await doctorService.createDoctor(ctxAOwner, 'standard', {
+    name: 'Dr. Hours', slotDurationMinutes: 30,
+    availability: { mon: HOURS, tue: HOURS, wed: HOURS, thu: HOURS, fri: HOURS, sat: HOURS, sun: HOURS },
+  });
+  const drAny = await doctorService.createDoctor(ctxAOwner, 'standard', { name: 'Dr. Anytime', slotDurationMinutes: 30 }); // no availability configured
+  const p = await patientService.createPatient(ctxAOwner, { name: 'Hours Patient', phone: '9333000001' });
+
+  // A fixed local hour on a day 3 days out (every weekday is 09:00–18:00, so weekday is irrelevant).
+  const atHour = (h, m = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() + 3);
+    d.setHours(h, m, 0, 0);
+    return d;
+  };
+
+  // Out-of-hours scheduled (online) booking is rejected server-side even though the UI would never offer it.
+  await assert.rejects(
+    () => appointmentService.book(ctxAOwner, { doctorId: drHours._id, patientId: p._id, scheduledAt: atHour(3), source: 'online' }),
+    /working hours/i,
+    'a 3 AM online booking against a 09–18 doctor is rejected'
+  );
+
+  // In-hours scheduled booking succeeds.
+  const ok = await appointmentService.book(ctxAOwner, { doctorId: drHours._id, patientId: p._id, scheduledAt: atHour(10), source: 'online' });
+  assert.equal(ok.status, 'booked', 'a 10 AM online booking is accepted');
+
+  // Walk-in is exempt (patient physically present — staff may intentionally overflow hours).
+  const walk = await appointmentService.book(ctxAOwner, { doctorId: drHours._id, patientId: p._id, scheduledAt: atHour(4), source: 'walkin' });
+  assert.equal(walk.status, 'booked', 'a walk-in is exempt from the working-hours guard');
+
+  // A doctor with no configured hours is bookable at any time (guard must not lock them out).
+  const anytime = await appointmentService.book(ctxAOwner, { doctorId: drAny._id, patientId: p._id, scheduledAt: atHour(2), source: 'online' });
+  assert.equal(anytime.status, 'booked', 'a doctor with no hours set is bookable anytime');
+
+  // Reschedule into out-of-hours is likewise rejected.
+  await assert.rejects(
+    () => appointmentService.reschedule(ctxAOwner, ok._id, atHour(23)),
+    /working hours/i,
+    'rescheduling into 11 PM against a 09–18 doctor is rejected'
+  );
+
+  console.log('  ✓ [guard] working hours enforced for scheduled book/reschedule; walk-ins & no-hours doctors exempt');
 });

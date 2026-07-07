@@ -78,12 +78,19 @@ async function requestOtp(clinicId, contactRaw) {
       urgent: true, // a patient is actively waiting to type this — skip the WhatsApp send queue
     });
   } catch (err) {
-    // Email failures still surface (as before). For phone, if the channel isn't available
-    // (e.g. WhatsApp not paired and SMS not configured), fail with a friendly message in prod;
-    // in dev the returned devCode keeps the flow testable.
+    // Email failures still surface (as before). For phone, give a TRUTHFUL, channel-aware message in
+    // prod (the old copy told a phone-only patient to "try your email" — which they may not have). In
+    // dev the returned devCode keeps the flow testable.
     if (config.isProd) {
       if (c.kind === 'email') throw err;
-      throw new AppError(503, 'We couldn’t send a code to that number. Please try your email instead.');
+      const { adapters } = require('./notifications');
+      const smsReady = typeof adapters.sms.isConfigured === 'function' && adapters.sms.isConfigured();
+      throw new AppError(
+        503,
+        smsReady
+          ? 'We couldn’t send a code to that number just now. Please try again shortly.'
+          : 'This clinic can’t send verification codes by SMS yet. Please use your email address, or contact the clinic for help.'
+      );
     }
   }
 

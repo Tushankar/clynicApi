@@ -50,6 +50,12 @@ const notificationSchema = new mongoose.Schema(
     message: { type: String, required: true, trim: true },
     link: { type: String, trim: true },
     read: { type: Boolean, default: false },
+    // Optional idempotency key. When set, notificationService.emit skips creating a new row if an
+    // UNREAD notification with the same clinicId+dedupeKey already exists — this stops duplicate
+    // bell spam from recurring emitters (e.g. the pharmacy low-stock / near-expiry re-checks that
+    // run on every stock write AND on the scheduled sweep). A fresh alert reappears only once staff
+    // have read/cleared the previous one.
+    dedupeKey: { type: String, default: null },
   },
   { timestamps: true }
 );
@@ -57,5 +63,6 @@ const notificationSchema = new mongoose.Schema(
 clinicScoped(notificationSchema);
 branchAware(notificationSchema);
 notificationSchema.index({ clinicId: 1, recipientId: 1, read: 1, createdAt: -1 });
+notificationSchema.index({ clinicId: 1, dedupeKey: 1, read: 1 }); // fast unread-by-key de-dup lookup
 
 module.exports = mongoose.model('Notification', notificationSchema);

@@ -97,6 +97,65 @@ async function claimAndApply(ctx, { orderId, paymentId, method = 'online' }) {
 }
 
 /**
+ * Refund the ONLINE-paid portion of an invoice back through the gateway (Razorpay refund API),
+ * allocated across this invoice's captured payments (newest first, each up to its un-refunded
+ * balance). Cash/desk payments have no gateway leg — staff return the cash — so this refunds at
+ * most the online-captured total. Records each gateway refund on the Payment (refunds[]/
+ * amountRefunded; status → 'refunded' once fully refunded) and audits it. THROWS if the gateway
+ * rejects, so the caller must not update the books on a failed refund (no phantom refunds).
+ * Returns { onlineRefunded, refunds }.
+ */
+async function refundForInvoice(ctx, invoiceId, amount, reason) {
+  const amt = round2(amount);
+  const payments = await Payment.find({
+    clinicId: ctx.clinicId,
+    kind: 'invoice',
+    invoiceId,
+    status: { $in: ['paid', 'refunded'] },
+    paymentId: { $type: 'string' },
+  }).sort({ createdAt: -1 });
+
+  let remaining = amt;
+  const refunds = [];
+  for (const p of payments) {
+    if (remaining <= 0) break;
+    const refundable = round2((p.amount || 0) - (p.amountRefunded || 0));
+    if (refundable <= 0) continue;
+    const portion = round2(Math.min(remaining, refundable));
+    // eslint-disable-next-line no-await-in-loop
+    const res = await gateway.refund({ paymentId: p.paymentId, amount: portion, notes: { reason: reason || 'refund', invoiceId: String(invoiceId) } });
+    p.refunds.push({ refundId: res.id, amount: portion, reason, status: res.status || 'processed' });
+    p.amountRefunded = round2((p.amountRefunded || 0) + portion);
+    if (p.amountRefunded >= round2(p.amount)) p.status = 'refunded';
+    // eslint-disable-next-line no-await-in-loop
+    await p.save();
+    // eslint-disable-next-line no-await-in-loop
+    await AuditLog.create({ clinicId: ctx.clinicId, actorId: ctx.actorId || null, actorRole: ctx.actorRole || null, action: 'update', entityType: 'Payment', entityId: p._id, after: { refundId: res.id, amount: portion, status: p.status } });
+    refunds.push({ paymentId: p.paymentId, refundId: res.id, amount: portion });
+    remaining = round2(remaining - portion);
+  }
+  return { onlineRefunded: round2(amt - remaining), refunds };
+}
+
+/** Reconcile a refund.* webhook against the Payment (records/updates the refund entry; alerts on failure). */
+async function reconcileRefundStatus(ctx, payment, { refundId, amount, status }) {
+  const existing = payment.refunds.find((r) => r.refundId === refundId);
+  if (existing) {
+    existing.status = status;
+  } else {
+    payment.refunds.push({ refundId, amount, status });
+    if (status === 'processed') payment.amountRefunded = round2((payment.amountRefunded || 0) + amount);
+  }
+  if (round2(payment.amountRefunded || 0) >= round2(payment.amount)) payment.status = 'refunded';
+  await payment.save();
+  if (status === 'failed') {
+    require('./notificationService')
+      .emit(ctx, { type: 'other', message: `A refund (${refundId}) FAILED at the gateway — the patient may not have received their money. Please check billing.`, link: '/billing' })
+      .catch(() => {});
+  }
+}
+
+/**
  * Verify a checkout callback. The signature is checked SERVER-SIDE; a forged or
  * client-only "paid" claim is rejected and nothing is credited (payment rule 1).
  */
@@ -142,6 +201,17 @@ async function handleWebhook(rawBody, signature, eventIdHeader) {
       if (payment) {
         const ctx = { clinicId: payment.clinicId, actorId: 'system:webhook', actorRole: null };
         await claimAndApply(ctx, { orderId, paymentId, method: entity.method || 'online' });
+      }
+    }
+  } else if (type.startsWith('refund.')) {
+    // refund.processed / refund.failed — reconcile the async outcome of a gateway refund.
+    const entity = event.payload?.refund?.entity || {};
+    const paymentId = entity.payment_id;
+    if (paymentId) {
+      const payment = await Payment.findOne({ paymentId });
+      if (payment) {
+        const ctx = { clinicId: payment.clinicId, actorId: 'system:webhook', actorRole: null };
+        await reconcileRefundStatus(ctx, payment, { refundId: entity.id, amount: round2((entity.amount || 0) / 100), status: entity.status || 'processed' });
       }
     }
   } else if (type.startsWith('subscription.')) {
@@ -197,4 +267,4 @@ async function reconcileStuckPayments({ now = new Date() } = {}) {
   return { recovered, flagged, expired: abandoned.modifiedCount || abandoned.nModified || 0 };
 }
 
-module.exports = { createInvoiceOrder, verifyPayment, handleWebhook, claimAndApply, reconcileStuckPayments };
+module.exports = { createInvoiceOrder, verifyPayment, handleWebhook, claimAndApply, reconcileStuckPayments, refundForInvoice };

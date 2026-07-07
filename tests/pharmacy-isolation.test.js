@@ -762,3 +762,83 @@ test('(7b) reports are tenant-isolated and owner-level (managers get 403)', asyn
   assert.equal(allowed, 'ok', 'pharmacy_owner passes');
   console.log('  ✓ (7b) reports clinic-scoped; owner-level RBAC (manager 403, pharmacy_owner ok)');
 });
+
+/* ============ Part 8 — UP-A scheduled expiry sweep + alert de-dup (this change) ============ */
+
+test('(8a) scheduled sweep catches untouched near-expiry stock; alerts de-dup until read', async () => {
+  const pharmacyAlertService = require('../src/services/pharmacyAlertService');
+  const { Notification } = require('../src/models');
+  const flush = () => new Promise((r) => setTimeout(r, 50)); // let fire-and-forget emits settle
+
+  const soon = new Date(Date.now() + 30 * 24 * 3600 * 1000);      // inside the 60-day window
+  const far = new Date(Date.now() + 3 * 365 * 24 * 3600 * 1000);  // well outside it
+
+  const expiring = await medicineService.create(ctxA, { name: 'Sweep Expiring', reorderLevel: 0 });
+  await inventoryService.createBatch(ctxA, { medicineId: expiring._id, batchNo: 'NEAR', expiryDate: soon, quantityInStock: 25, purchaseUnitCost: 1 });
+  const healthy = await medicineService.create(ctxA, { name: 'Sweep Healthy', reorderLevel: 0 });
+  await inventoryService.createBatch(ctxA, { medicineId: healthy._id, batchNo: 'FAR', expiryDate: far, quantityInStock: 25, purchaseUnitCost: 1 });
+
+  await flush();
+  await Notification.deleteMany({}); // clear inline createBatch alerts → measure the SWEEP alone
+
+  const res = await pharmacyAlertService.sweepExpiring(new Date());
+  assert.equal(res.checked, 1, 'only the near-expiry medicine is swept (the healthy one is skipped)');
+  await flush();
+
+  const alerts = await Notification.find({ clinicId: ctxA.clinicId, type: 'stock_expiry' }).lean();
+  assert.equal(alerts.length, 1, 'sweep raised exactly one near-expiry alert with no stock write');
+  assert.match(alerts[0].message, /Sweep Expiring/);
+  assert.equal(alerts[0].dedupeKey, `stock_expiry:${expiring._id}`);
+
+  // A second sweep must NOT stack a duplicate while the first is still unread.
+  await pharmacyAlertService.sweepExpiring(new Date());
+  await flush();
+  assert.equal((await Notification.find({ clinicId: ctxA.clinicId, type: 'stock_expiry' }).lean()).length, 1, 'de-dup holds while the alert is unread');
+
+  // After staff clear it, the next sweep may raise a fresh alert.
+  await Notification.updateMany({ clinicId: ctxA.clinicId, type: 'stock_expiry' }, { $set: { read: true } });
+  await pharmacyAlertService.sweepExpiring(new Date());
+  await flush();
+  assert.equal(
+    (await Notification.find({ clinicId: ctxA.clinicId, type: 'stock_expiry', read: false }).lean()).length,
+    1,
+    'a fresh alert reappears once the previous one is read'
+  );
+  console.log('  ✓ (8a) scheduled sweep catches untouched near-expiry stock; alerts de-dup until read');
+});
+
+test('(8b) dispensing with reminders enabled schedules medicine-dose reminders (the loop that was missing)', async () => {
+  const { Reminder } = require('../src/models');
+  await seedClinics(); // clinic org_ultraA exists (ultra_premium)
+  await Reminder.deleteMany({});
+
+  // Patient WITH an email — WhatsApp is disabled in tests, so the channel resolves to email.
+  const patient = await tenantRepo(Patient, ctxA).create({ name: 'Dosage Pat', patientCode: 'DP1', email: 'dose@example.com' });
+  const rx = await tenantRepo(Prescription, ctxA).create({ patientId: patient._id, doctorId: new mongoose.Types.ObjectId(), patientName: 'Dosage Pat', items: [{ drug: 'Amox' }] });
+  const med = await medicineService.create(ctxA, { name: 'Amoxicillin', sellingPrice: 10, gstRate: 0 });
+  await inventoryService.createBatch(ctxA, { medicineId: med._id, expiryDate: '2035-01-01', quantityInStock: 50, purchaseUnitCost: 1 });
+
+  await dispenseService.dispense(ctxA, {
+    prescriptionId: rx._id,
+    items: [{ medicineId: med._id, qty: 6, unitPrice: 10, dosage: '1-0-1', durationDays: 3, remindersEnabled: true }],
+  });
+
+  const dose = await Reminder.find({ clinicId: ctxA.clinicId, type: /^dose:/ }).lean();
+  assert.ok(dose.length >= 1, 'medicine-dose reminders were scheduled (previously: none ever were)');
+  assert.ok(dose.every((r) => r.status === 'scheduled'), 'all scheduled');
+  assert.ok(dose.every((r) => r.channel === 'email'), 'email channel (WhatsApp off in tests)');
+  assert.ok(dose.every((r) => new Date(r.sendAt) > new Date()), 'every dose reminder is in the future');
+  assert.ok(dose.every((r) => /morning|night/.test(r.type)), '"1-0-1" schedules morning + night slots only (no afternoon)');
+  assert.match(dose[0].payload.message, /Amoxicillin/);
+  // Delivery itself rides the same already-tested Reminder machinery (phase1 covers _deliver end-to-end);
+  // here we prove the SCHEDULING loop the audit flagged as missing.
+
+  // Control: reminders OFF → no dose reminders scheduled.
+  await Reminder.deleteMany({});
+  await dispenseService.dispense(ctxA, {
+    prescriptionId: rx._id, clientToken: 'no-reminders',
+    items: [{ medicineId: med._id, qty: 2, unitPrice: 10, dosage: '1-0-1', durationDays: 3, remindersEnabled: false }],
+  });
+  assert.equal((await Reminder.find({ clinicId: ctxA.clinicId, type: /^dose:/ }).lean()).length, 0, 'no dose reminders when the flag is off');
+  console.log('  ✓ (8b) remindersEnabled dispense schedules "take your medicine" reminders; off → none');
+});

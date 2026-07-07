@@ -162,6 +162,18 @@ const config = Object.freeze({
     baileysSessionDir: process.env.BAILEYS_SESSION_DIR || './baileys_auth', // local auth (gitignored)
   },
 
+  // SMS channel (§10.5). Optional — email/WhatsApp are the primaries. Default 'none' = NOT configured:
+  // the adapter then throws a clear, actionable error (instead of the old cryptic always-throw stub)
+  // and the OTP flow surfaces a truthful message. Set SMS_DRIVER=msg91|fast2sms + SMS_API_KEY to send.
+  // Indian transactional SMS is DLT-gated — set SMS_SENDER_ID + SMS_DLT_TEMPLATE_ID for production.
+  sms: {
+    driver: (process.env.SMS_DRIVER || 'none').toLowerCase().trim(), // none | msg91 | fast2sms
+    apiKey: process.env.SMS_API_KEY || '',
+    senderId: process.env.SMS_SENDER_ID || '', // DLT-approved sender header
+    dltTemplateId: process.env.SMS_DLT_TEMPLATE_ID || '', // DLT template id (transactional)
+    route: (process.env.SMS_ROUTE || '').trim(), // provider route override (fast2sms 'dlt' | 'q')
+  },
+
   // AI assistant (§5.10, hard rule 2 — NEVER diagnoses). The guardrail (disclaimer on every
   // output + diagnosis/advice blocker) and the doctor-approval workflow are enforced in code,
   // independent of the driver. 'mock' is a safe deterministic local model; 'groq' (OpenAI-compatible,

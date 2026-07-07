@@ -26,6 +26,12 @@ async function createOrder({ amount, currency, receipt }) {
   return { id: order.id, amount, currency: order.currency, keyId: config.payments.keyId, receipt };
 }
 
+// Refund a captured payment back to the original method (partial or full). Razorpay works in paise.
+async function refund({ paymentId, amount, notes }) {
+  const r = await rzp().payments.refund(paymentId, { amount: Math.round(amount * 100), notes });
+  return { id: r.id, paymentId, amount, status: r.status || 'processed' };
+}
+
 function verifyPaymentSignature({ orderId, paymentId, signature }) {
   return safeEqualHex(hmacHex(config.payments.keySecret, `${orderId}|${paymentId}`), signature);
 }
@@ -34,4 +40,4 @@ function verifyWebhookSignature(rawBody, signature) {
   return safeEqualHex(hmacHex(config.payments.webhookSecret, rawBody), signature);
 }
 
-module.exports = { driver: 'razorpay', createOrder, verifyPaymentSignature, verifyWebhookSignature };
+module.exports = { driver: 'razorpay', createOrder, refund, verifyPaymentSignature, verifyWebhookSignature };

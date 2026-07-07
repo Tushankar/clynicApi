@@ -11,6 +11,7 @@ router.use(requireFeature('PRESCRIPTIONS'));
 router.get('/', requireRole('owner', 'doctor', 'receptionist'), ctrl.listLabs);
 router.post('/', requireRole('owner', 'doctor'), ctrl.createLab);
 router.patch('/:id/status', requireRole('owner', 'doctor', 'receptionist'), ctrl.setLabStatus);
+router.patch('/:id/results', requireRole('owner', 'doctor'), ctrl.recordLabResults);
 router.delete('/:id', requireRole('owner', 'doctor'), ctrl.removeLab);
 
 module.exports = router;

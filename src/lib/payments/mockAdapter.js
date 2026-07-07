@@ -19,6 +19,12 @@ async function createOrder({ amount, currency, receipt }) {
   };
 }
 
+// Mirrors razorpay.payments.refund — returns a processed refund locally so the refund flow is
+// exercised end-to-end in dev/test without a real gateway.
+async function refund({ paymentId, amount }) {
+  return { id: `rfnd_mock_${crypto.randomBytes(8).toString('hex')}`, paymentId, amount, status: 'processed' };
+}
+
 // Razorpay: signature = HMAC_SHA256(order_id + "|" + payment_id, key_secret)
 function verifyPaymentSignature({ orderId, paymentId, signature }) {
   return safeEqualHex(hmacHex(config.payments.keySecret, `${orderId}|${paymentId}`), signature);
@@ -38,4 +44,4 @@ function devSignWebhook(rawBody) {
   return hmacHex(config.payments.webhookSecret, rawBody);
 }
 
-module.exports = { driver: 'mock', createOrder, verifyPaymentSignature, verifyWebhookSignature, devSignPayment, devSignWebhook };
+module.exports = { driver: 'mock', createOrder, refund, verifyPaymentSignature, verifyWebhookSignature, devSignPayment, devSignWebhook };

@@ -3,8 +3,22 @@
 const mongoose = require('mongoose');
 const { clinicScoped, softDeletable, branchAware } = require('./plugins');
 
+/** One measured result line (value is a string so "12.3", "Positive", "Not detected" all fit). */
+const labResultSchema = new mongoose.Schema(
+  {
+    test: { type: String, trim: true }, // which ordered test this row reports
+    value: { type: String, trim: true },
+    unit: { type: String, trim: true },
+    refRange: { type: String, trim: true }, // reference / normal range
+    flag: { type: String, enum: ['normal', 'low', 'high', 'abnormal', ''], default: '' },
+  },
+  { _id: false }
+);
+
 /**
- * labRequests — tests ordered during a consultation (clinical; rules 6, 7, 8).
+ * labRequests — tests ordered during a consultation (clinical; rules 6, 7, 8). The result fields
+ * close the "order → collect → result" loop that previously dead-ended at status='completed' with
+ * nowhere to store what came back.
  */
 const labRequestSchema = new mongoose.Schema(
   {
@@ -15,6 +29,12 @@ const labRequestSchema = new mongoose.Schema(
     tests: { type: [String], default: [] },
     status: { type: String, enum: ['requested', 'collected', 'completed', 'cancelled'], default: 'requested' },
     notes: { type: String, trim: true },
+    // Results captured against the order (was missing entirely).
+    results: { type: [labResultSchema], default: [] },
+    resultNotes: { type: String, trim: true }, // interpretation / summary
+    resultReportId: { type: mongoose.Schema.Types.ObjectId, ref: 'Report', default: null }, // optional attached file
+    resultedAt: { type: Date, default: null },
+    resultedBy: { type: String, default: null }, // Clerk user id
   },
   { timestamps: true }
 );

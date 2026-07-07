@@ -4,7 +4,7 @@ const { Appointment, Doctor, Patient, Invoice, Clinic, AuditLog } = require('../
 const { tenantRepo } = require('../lib/TenantRepository');
 const { nextSequence } = require('../lib/sequence');
 const { dayRange, dateKey, addMinutes, parseDateOnly } = require('../lib/datetime');
-const { generateSlots } = require('../lib/availability');
+const { generateSlots, hasWorkingHours, isWithinWorkingHours } = require('../lib/availability');
 const { canTransition, ACTIVE_STATUSES } = require('../config/appointments');
 const reminderService = require('./reminderService');
 const patientService = require('./patientService');
@@ -119,6 +119,12 @@ async function book(ctx, data) {
   // scheduled booking server-side — the UI is never the lock. Walk-ins are exempt: the patient is
   // physically present and staff decided to see them, so a doctor's schedule may intentionally overflow.
   if (source !== 'walkin') {
+    // Working hours: only enforced when the doctor has actually configured availability, so a
+    // doctor with no hours set is not accidentally un-bookable (matches generateSlots, which
+    // returns nothing for such a doctor rather than blocking).
+    if (hasWorkingHours(doctor) && !isWithinWorkingHours(doctor, scheduledAt)) {
+      throw new AppError(409, "That time is outside the doctor's working hours");
+    }
     await assertSlotFree(ctx, { doctorId, scheduledAt, durationMinutes: duration, bufferMinutes: doctor.appointmentBufferMinutes || 0 });
     await require('./availabilityBlockService').assertNotBlocked(ctx, { doctorId, scheduledAt, durationMinutes: duration });
   }
@@ -306,6 +312,9 @@ async function reschedule(ctx, id, newScheduledAt) {
   // the doctor's working hours. This closes the reschedule-into-leave hole (the block check used
   // to run only on book, so staff — and patients via the manage link — could move a visit into a
   // day the doctor was off).
+  if (doctor && hasWorkingHours(doctor) && !isWithinWorkingHours(doctor, newScheduledAt)) {
+    throw new AppError(409, "That time is outside the doctor's working hours");
+  }
   await assertSlotFree(ctx, { doctorId: appt.doctorId, scheduledAt: newScheduledAt, durationMinutes: duration, bufferMinutes: (doctor && doctor.appointmentBufferMinutes) || 0, ignoreId: id });
   await require('./availabilityBlockService').assertNotBlocked(ctx, { doctorId: appt.doctorId, scheduledAt: newScheduledAt, durationMinutes: duration });
 

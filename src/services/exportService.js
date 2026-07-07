@@ -1,6 +1,6 @@
 'use strict';
 
-const { Patient, Appointment, Invoice, Expense } = require('../models');
+const { Patient, Appointment, Invoice, Expense, Prescription, ClinicalNote, LabRequest, Report } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 const AppError = require('../utils/AppError');
 
@@ -58,6 +58,38 @@ const ENTITIES = {
       tenantRepo(Expense, ctx, { audit: false }).find(rangeFilter('date', range), { sort: { date: -1 }, limit: MAX_ROWS, lean: true }),
     headers: ['Date', 'Category', 'Description', 'Amount', 'Method', 'Note'],
     row: (e) => [day(e.date), e.category, e.description, e.amount, e.method, e.note],
+  },
+  // The actual MEDICAL RECORD (previously excluded from "export my data", which left prescriptions,
+  // notes and lab/report data hostage). Prescription/lab items are flattened to a readable cell.
+  prescriptions: {
+    fetch: (ctx, range) =>
+      tenantRepo(Prescription, ctx, { audit: false }).find(rangeFilter('createdAt', range), { sort: { createdAt: -1 }, limit: MAX_ROWS, lean: true }),
+    headers: ['Date', 'Patient', 'Doctor', 'Diagnosis', 'Medicines', 'Notes'],
+    row: (p) => [
+      iso(p.createdAt), p.patientName, p.doctorName, p.diagnosis,
+      (p.items || []).map((it) => [it.drug, it.dose, it.frequency, it.duration].filter(Boolean).join(' ')).join('; '),
+      p.notes,
+    ],
+  },
+  clinical_notes: {
+    fetch: (ctx, range) =>
+      tenantRepo(ClinicalNote, ctx, { audit: false }).find(rangeFilter('createdAt', range), { sort: { createdAt: -1 }, limit: MAX_ROWS, lean: true }),
+    headers: ['Date', 'Patient', 'Doctor', 'Note'],
+    row: (n) => [iso(n.createdAt), String(n.patientId || ''), n.doctorName, n.content],
+  },
+  lab_requests: {
+    fetch: (ctx, range) =>
+      tenantRepo(LabRequest, ctx, { audit: false }).find(rangeFilter('createdAt', range), { sort: { createdAt: -1 }, limit: MAX_ROWS, lean: true }),
+    headers: ['Date', 'Patient', 'Tests', 'Status', 'Notes'],
+    row: (l) => [iso(l.createdAt), l.patientName, (l.tests || []).join('; '), l.status, l.notes],
+  },
+  // File MANIFEST (metadata, not the bytes) — so an export names every uploaded report. The bytes
+  // themselves come from the storage bucket / backup; this proves nothing is silently left behind.
+  reports: {
+    fetch: (ctx, range) =>
+      tenantRepo(Report, ctx, { audit: false }).find(rangeFilter('createdAt', range), { sort: { createdAt: -1 }, limit: MAX_ROWS, lean: true }),
+    headers: ['Date', 'Patient', 'Type', 'Title', 'Original file', 'MIME', 'Size (bytes)', 'Storage key'],
+    row: (r) => [iso(r.createdAt), String(r.patientId || ''), r.type, r.title, r.originalName, r.mimeType, r.size || '', r.storageKey],
   },
 };
 

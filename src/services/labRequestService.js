@@ -51,10 +51,45 @@ async function updateStatus(ctx, id, status) {
   return d;
 }
 
+/**
+ * Record results against a lab order and (by default) mark it completed — the piece that closes the
+ * order → collect → result loop. Accepts structured rows and/or an interpretation note, plus an
+ * optional linked report file (resultReportId).
+ */
+async function recordResults(ctx, id, { results, resultNotes, resultReportId, complete = true } = {}) {
+  const clean = (Array.isArray(results) ? results : [])
+    .map((r) => ({
+      test: String(r.test || '').trim(),
+      value: String(r.value ?? '').trim(),
+      unit: String(r.unit || '').trim(),
+      refRange: String(r.refRange || '').trim(),
+      flag: ['normal', 'low', 'high', 'abnormal'].includes(r.flag) ? r.flag : '',
+    }))
+    .filter((r) => r.value !== ''); // only persist tests that actually have a result value
+
+  const patch = {
+    results: clean,
+    resultNotes: String(resultNotes || '').trim(),
+    resultReportId: resultReportId || null,
+    resultedAt: new Date(),
+    resultedBy: ctx.actorId || null,
+  };
+  if (complete) patch.status = 'completed';
+
+  const d = await repo(ctx).updateById(id, patch);
+  if (!d) throw new AppError(404, 'Lab request not found');
+  if (patch.status === 'completed') {
+    notificationService
+      .emit(ctx, { type: 'lab_request_completed', message: `Lab results are in for ${d.patientName || 'a patient'}`, link: d.patientId ? `/patients/${d.patientId}` : '/dashboard' })
+      .catch(() => {});
+  }
+  return d;
+}
+
 async function softDelete(ctx, id) {
   const d = await repo(ctx).softDeleteById(id);
   if (!d) throw new AppError(404, 'Lab request not found');
   return d;
 }
 
-module.exports = { create, list, updateStatus, softDelete };
+module.exports = { create, list, updateStatus, recordResults, softDelete };

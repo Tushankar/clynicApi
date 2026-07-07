@@ -27,6 +27,24 @@ const paymentSchema = new mongoose.Schema(
     status: { type: String, enum: ['created', 'processing', 'paid', 'failed', 'refunded', 'expired'], default: 'created' },
     signatureVerified: { type: Boolean, default: false },
     method: { type: String },
+    // Gateway refunds issued back against this captured payment. Sum → amountRefunded; when it
+    // reaches `amount` the payment is 'refunded'. Populated by the Razorpay refund API + refund.* webhook.
+    amountRefunded: { type: Number, default: 0 },
+    refunds: {
+      type: [
+        new mongoose.Schema(
+          {
+            refundId: { type: String }, // gateway refund id (rfnd_...)
+            amount: { type: Number },
+            reason: { type: String },
+            status: { type: String, default: 'processed' }, // processed | pending | failed
+            at: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

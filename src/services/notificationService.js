@@ -26,7 +26,7 @@ function recipientFilter(ctx) {
  * previously meant new event types (review/waitlist) never reached the bell at all. emit never
  * throws into a caller's flow.
  */
-async function emit(ctx, { type = 'other', message, link = null, recipientId = null, recipientType = 'staff', branchId = null }) {
+async function emit(ctx, { type = 'other', message, link = null, recipientId = null, recipientType = 'staff', branchId = null, dedupeKey = null }) {
   if (!message) return null;
   let safeType = type;
   if (!KNOWN_TYPES.has(type)) {
@@ -34,7 +34,14 @@ async function emit(ctx, { type = 'other', message, link = null, recipientId = n
     safeType = 'other';
   }
   try {
-    const doc = await repo(ctx).create({ type: safeType, message, link, recipientId, recipientType, ...(branchId ? { branchId } : {}) });
+    // De-dup: if this alert carries a key and an UNREAD notification with the same key already
+    // exists for the clinic, don't stack another one — return the existing (a new one reappears
+    // only after staff clear the old). Guards recurring emitters (pharmacy sweep / stock writes).
+    if (dedupeKey) {
+      const existing = await repo(ctx).findOne({ dedupeKey, read: false });
+      if (existing) return existing;
+    }
+    const doc = await repo(ctx).create({ type: safeType, message, link, recipientId, recipientType, ...(dedupeKey ? { dedupeKey } : {}), ...(branchId ? { branchId } : {}) });
     realtime.emitNotification(ctx.clinicId, recipientId, {
       _id: String(doc._id),
       type: safeType,

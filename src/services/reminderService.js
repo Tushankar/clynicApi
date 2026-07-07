@@ -23,6 +23,47 @@ const REMINDER_OFFSETS = [
   { type: 'appointment_2h', minutesBefore: 2 * 60 },
 ];
 
+// Standard Indian dosage slots: a positional "M-A-N" code (e.g. "1-0-1") maps to these times of
+// day. Defaults for now — a later enhancement could make them clinic-configurable.
+const DOSE_SLOTS = [
+  { key: 'morning', hour: 8 },
+  { key: 'afternoon', hour: 14 },
+  { key: 'night', hour: 20 },
+];
+const MAX_DOSE_REMINDERS = 90; // bound the horizon (≈30 days × 3/day) so a long course can't flood
+
+/** Parse a "1-0-1" / "1-1-1" dosage code → which daily slots are active. Unknown format → once daily. */
+function activeDoseSlots(dosage) {
+  const parts = String(dosage || '').split(/[-\s/]+/).filter((p) => p !== '');
+  if (parts.length === 3 && parts.every((p) => /^\d+$/.test(p))) {
+    const active = DOSE_SLOTS.filter((_, i) => Number(parts[i]) > 0);
+    return active.length ? active : [DOSE_SLOTS[0]];
+  }
+  return [DOSE_SLOTS[0]];
+}
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function dateKeyLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Pick the delivery channel + address for a patient: WhatsApp when the clinic is entitled AND the
+ * channel is actually connected AND the patient has a phone; otherwise email. WhatsApp is never
+ * load-bearing. Mirrors the logic in scheduleAppointmentReminders/scheduleReviewRequest.
+ */
+function resolvePatientChannel(clinic, patient) {
+  const { adapters } = require('./notifications');
+  const waConnected = typeof adapters.whatsapp.isConnected === 'function' ? adapters.whatsapp.isConnected() : Boolean(config.whatsapp.enabled);
+  const whatsappAvailable = planHasFeature(clinic?.subscriptionPlan, 'WHATSAPP_REMINDERS') && config.whatsapp.enabled && waConnected;
+  if (whatsappAvailable && patient?.phone) return { channel: 'whatsapp', to: patient.phone };
+  return { channel: 'email', to: patient?.email || null };
+}
+
 let enqueuer = async () => {};
 function setEnqueuer(fn) {
   enqueuer = typeof fn === 'function' ? fn : async () => {};
@@ -207,6 +248,90 @@ async function scheduleReviewRequest(ctx, { appointment, now = new Date() }) {
 }
 
 /**
+ * Schedule "take your medicine" reminders for a dosage schedule (§6.5). This is the piece that was
+ * missing: remindersEnabled was collected at dispense time but nothing ever read it, so no dosage
+ * reminder was ever sent. Creates one Reminder per active dose-slot per day across the course
+ * [startDate, endDate], reusing the SAME delivery machinery (atomic claim → no double-send) and
+ * channel selection as appointment reminders. Each occurrence gets a unique `type`
+ * (dose:<scheduleId>:<date>:<slot>) so re-runs are idempotent and the unique {appointmentId,type}
+ * index never collides (dosage reminders carry no appointmentId). Best-effort — never throws.
+ */
+async function scheduleDosageReminders(ctx, schedule, { now = new Date() } = {}) {
+  try {
+    if (!schedule || !schedule.remindersEnabled) return [];
+    const clinic = await Clinic.findOne({ clinicId: ctx.clinicId }).lean();
+    const { Patient } = require('../models');
+    const patient = await Patient.findOne({ clinicId: ctx.clinicId, _id: schedule.patientId, deletedAt: null }).lean();
+    if (!clinic || !patient) return [];
+
+    const { channel, to } = resolvePatientChannel(clinic, patient);
+    if (!to) return [];
+
+    const slots = activeDoseSlots(schedule.dosage);
+    const start = schedule.startDate ? new Date(schedule.startDate) : new Date(now);
+    const end = schedule.endDate
+      ? new Date(schedule.endDate)
+      : schedule.durationDays
+        ? new Date(start.getTime() + schedule.durationDays * 24 * 3600 * 1000)
+        : new Date(start);
+
+    // Enumerate future (day × slot) occurrences from the later of course-start / today, capped.
+    const occurrences = [];
+    const cursor = new Date(Math.max(start.getTime(), startOfDay(now).getTime()));
+    for (let d = new Date(cursor); d <= end && occurrences.length < MAX_DOSE_REMINDERS; d.setDate(d.getDate() + 1)) {
+      for (const slot of slots) {
+        const sendAt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), slot.hour, 0, 0, 0);
+        if (sendAt > now) occurrences.push({ sendAt, slotKey: slot.key, dateKey: dateKeyLocal(d) });
+      }
+    }
+    if (occurrences.length >= MAX_DOSE_REMINDERS) {
+      console.warn(`[reminderService] dosage reminders capped at ${MAX_DOSE_REMINDERS} for schedule ${schedule._id}`);
+    }
+
+    const med = schedule.medicineName || 'your medicine';
+    const timing = schedule.timing ? ` (${schedule.timing})` : '';
+    const subject = `Medicine reminder — ${med}`;
+    const message = `Hi ${patient.name || 'there'}, it's time to take ${med}${schedule.dosage ? ` [${schedule.dosage}]` : ''}${timing}. Take care!`;
+
+    const created = [];
+    for (const occ of occurrences.slice(0, MAX_DOSE_REMINDERS)) {
+      const type = `dose:${schedule._id}:${occ.dateKey}:${occ.slotKey}`;
+      const filter = { clinicId: ctx.clinicId, type };
+      const update = {
+        $set: {
+          clinicId: ctx.clinicId,
+          patientId: schedule.patientId,
+          channel,
+          sendAt: occ.sendAt,
+          status: 'scheduled',
+          payload: { to, subject, message, email: patient.email || null, phone: patient.phone || null },
+          error: null,
+          sentAt: null,
+        },
+      };
+      let reminder;
+      try {
+        reminder = await Reminder.findOneAndUpdate(filter, update, { new: true, upsert: true, setDefaultsOnInsert: true });
+      } catch (err) {
+        if (err.code === 11000) reminder = await Reminder.findOne(filter);
+        else throw err;
+      }
+      if (!reminder) continue;
+      created.push(reminder);
+      try {
+        await enqueuer(reminder);
+      } catch {
+        /* poller covers it */
+      }
+    }
+    return created;
+  } catch (err) {
+    console.error('[reminderService] scheduleDosageReminders failed:', err?.message || err);
+    return [];
+  }
+}
+
+/**
  * Atomically claim a reminder and deliver it once. Returns 'sent' | 'failed' | 'skipped'.
  * Delivery is multi-channel: the stored primary channel first; then a best-effort MIRROR on
  * the other channel when it's actually usable (email + WhatsApp at the same time, §10.5).
@@ -315,6 +440,7 @@ module.exports = {
   setEnqueuer,
   scheduleAppointmentReminders,
   scheduleReviewRequest,
+  scheduleDosageReminders,
   cancelAppointmentReminders,
   processOneReminder,
   processDueReminders,

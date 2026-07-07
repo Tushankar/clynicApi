@@ -175,7 +175,7 @@ async function dispense(ctx, { prescriptionId, items, branchId, clientToken: raw
       if (!line.dosage && !line.durationDays && !line.instructions) continue;
       const startDate = new Date();
       const endDate = line.durationDays ? new Date(startDate.getTime() + line.durationDays * DAY_MS) : null;
-      await dsRepo.create({
+      const schedule = await dsRepo.create({
         patientId: rx.patientId,
         medicineId: line.med._id,
         medicineName: line.med.name,
@@ -190,6 +190,11 @@ async function dispense(ctx, { prescriptionId, items, branchId, clientToken: raw
         remindersEnabled: line.remindersEnabled,
         createdBy: ctx.actorId || null,
       });
+      // Close the loop the audit flagged: when the patient opted in, actually SCHEDULE the
+      // "take your medicine" reminders (they were previously collected but never sent).
+      if (line.remindersEnabled) {
+        await require('./reminderService').scheduleDosageReminders(ctx, schedule);
+      }
     }
   } catch (err) {
     console.error('[dispenseService] dosage schedule creation failed:', err?.message || err);

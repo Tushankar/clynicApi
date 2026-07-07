@@ -16,7 +16,7 @@ const reportSchema = new mongoose.Schema(
     title: { type: String, trim: true },
 
     // Private storage — NOT a public URL.
-    storageDriver: { type: String, enum: ['local', 's3'], required: true },
+    storageDriver: { type: String, enum: ['local', 's3', 'cloudinary'], required: true },
     storageKey: { type: String, required: true }, // opaque key/path in the private bucket
     originalName: { type: String, trim: true },
     mimeType: { type: String, trim: true },

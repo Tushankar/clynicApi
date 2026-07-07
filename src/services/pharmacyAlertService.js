@@ -10,8 +10,10 @@ const notificationService = require('./notificationService');
  * pharmacy staff via the existing notification center (bell). Fire-and-forget by design:
  * checkMedicine NEVER throws into a caller — an alert failure must never break a stock write.
  *
- * Alerts are emitted inline on inventory writes (UP-A). A scheduled expiry sweep and
- * per-medicine de-duplication are deferred to a later phase.
+ * Alerts are emitted inline on inventory writes AND by a scheduled cross-tenant sweep
+ * (sweepExpiring) so a batch quietly ageing into its expiry window with no stock activity is
+ * still caught. Both paths pass a per-medicine dedupeKey so the bell never stacks duplicates
+ * (a fresh alert reappears only after staff clear the previous one — see notificationService.emit).
  */
 const NEAR_EXPIRY_DAYS = 60; // "expiring soon" window (product decision)
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -74,6 +76,7 @@ async function checkMedicine(ctx, medicineId) {
           type: 'low_stock',
           message: `Low stock: ${med.name} — ${s.available} ${unit}(s) left (reorder at ${med.reorderLevel}).`,
           link,
+          dedupeKey: `low_stock:${medicineId}`,
         })
         .catch(() => {});
     }
@@ -84,6 +87,7 @@ async function checkMedicine(ctx, medicineId) {
           type: 'stock_expiry',
           message: `Expiring soon: ${med.name} — ${s.expiringSoonQty} ${unit}(s) within ${NEAR_EXPIRY_DAYS} days.`,
           link,
+          dedupeKey: `stock_expiry:${medicineId}`,
         })
         .catch(() => {});
     }
@@ -92,4 +96,36 @@ async function checkMedicine(ctx, medicineId) {
   }
 }
 
-module.exports = { checkMedicine, summarize, NEAR_EXPIRY_DAYS };
+/**
+ * Scheduled cross-tenant expiry sweep (fills the gap the inline checks leave). Inline alerts only
+ * fire on a stock WRITE, but expiry advances with the clock — a batch ageing into the window while
+ * untouched would never alert. One indexed query finds every live batch expiring within the window
+ * across all clinics; each affected medicine is re-checked (emitting de-duplicated alerts). Runs
+ * from the campaign tick (jobs/campaignRunner). Never throws; returns a small summary for logs/tests.
+ */
+async function sweepExpiring(now = new Date()) {
+  const soonCutoff = new Date(now.getTime() + NEAR_EXPIRY_DAYS * DAY_MS);
+  let checked = 0;
+  try {
+    // System job: query the model directly (cross-tenant, no per-request ctx), bounded by the
+    // { clinicId, expiryDate } index. Exclude already-expired (not "expiring soon") and empty batches.
+    const batches = await InventoryBatch.find(
+      { deletedAt: null, quantityInStock: { $gt: 0 }, expiryDate: { $gte: now, $lte: soonCutoff } },
+      { clinicId: 1, medicineId: 1 }
+    ).lean();
+    const seen = new Set(); // one check per (clinic, medicine)
+    for (const b of batches) {
+      const key = `${b.clinicId}:${b.medicineId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // eslint-disable-next-line no-await-in-loop
+      await checkMedicine({ clinicId: b.clinicId, actorId: 'system', actorRole: 'system' }, b.medicineId);
+      checked += 1;
+    }
+  } catch (err) {
+    console.error('[pharmacyAlertService] sweepExpiring failed:', err?.message || err);
+  }
+  return { checked };
+}
+
+module.exports = { checkMedicine, summarize, sweepExpiring, NEAR_EXPIRY_DAYS };

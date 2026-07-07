@@ -127,13 +127,25 @@ async function refund(ctx, id, { amount, reason }) {
   if (!(amt > 0)) throw new AppError(400, 'Refund amount must be positive');
   if (amt > round2(inv.amountPaid - inv.amountRefunded)) throw new AppError(400, 'Refund exceeds the paid amount');
 
+  // Return online-paid money THROUGH THE GATEWAY first — a book-only refund (the previous behavior)
+  // updated the ledger but never actually returned the patient's money. Cash-paid portions have no
+  // gateway leg (staff hand cash back). If the gateway rejects, we do NOT touch the books, so a
+  // failed refund never shows as "refunded" in the register. Lazy require avoids a service cycle.
+  let gatewayResult = { onlineRefunded: 0, refunds: [] };
+  try {
+    gatewayResult = await require('./paymentService').refundForInvoice(ctx, id, amt, reason);
+  } catch (err) {
+    throw new AppError(502, `Refund could not be processed at the payment gateway: ${err.message}`);
+  }
+
   const refunds = [...inv.refunds, { amount: amt, reason, at: new Date(), byStaffId: ctx.actorId || null }];
   const amountRefunded = round2(inv.amountRefunded + amt);
   const next = { refunds, amountRefunded };
   next.status = deriveStatus({ ...inv.toObject(), amountRefunded });
 
   const updated = await repo(ctx).updateById(id, next);
-  notificationService.emit(ctx, { type: 'payment_refunded', message: `Refund of ₹${amt} issued (${inv.invoiceNumber})`, link: '/billing' }).catch(() => {});
+  const via = gatewayResult.onlineRefunded > 0 ? ` (₹${gatewayResult.onlineRefunded} returned to the original payment method)` : '';
+  notificationService.emit(ctx, { type: 'payment_refunded', message: `Refund of ₹${amt} issued (${inv.invoiceNumber})${via}`, link: '/billing' }).catch(() => {});
   return updated;
 }
 
