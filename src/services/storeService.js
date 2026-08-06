@@ -66,7 +66,8 @@ function categoryView(ctx, c) {
     name: c.name,
     slug: c.slug || null,
     description: c.description || '',
-    imageUrl: c.imageStorageKey ? require('../lib/storage').getSignedUrl({ clinicId: ctx.clinicId, key: c.imageStorageKey, meta: { mime: 'image/jpeg' } }).path : null,
+    // Absolute URL — the storefront is served from a different origin than the API.
+    imageUrl: c.imageStorageKey ? require('../lib/storage').getSignedUrl({ clinicId: ctx.clinicId, key: c.imageStorageKey, meta: { mime: 'image/jpeg' } }).url : null,
   };
 }
 

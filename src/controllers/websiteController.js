@@ -18,6 +18,11 @@ const putContent = asyncHandler(async (req, res) => res.json(await websiteServic
 const putTheme = asyncHandler(async (req, res) => res.json(await websiteService.updateTheme(req.ctx, { template: req.body.template, theme: req.body.theme })));
 const publish = asyncHandler(async (req, res) => res.json(await websiteService.setPublished(req.ctx, req.body.published)));
 
+// Media — multipart image uploads for the gallery / hero / logo slots.
+const postMedia = asyncHandler(async (req, res) => res.json(await websiteService.uploadImage(req.ctx, req.params.slot, req.file)));
+const deleteGalleryImage = asyncHandler(async (req, res) => res.json(await websiteService.removeGalleryImage(req.ctx, req.params.index)));
+const putGalleryOrder = asyncHandler(async (req, res) => res.json(await websiteService.reorderGallery(req.ctx, req.body.order)));
+
 const getPages = asyncHandler(async (req, res) => res.json({ items: await websiteService.listPages(req.ctx) }));
 const postPage = asyncHandler(async (req, res) => res.status(201).json(await websiteService.createPage(req.ctx, req.body)));
 const putPage = asyncHandler(async (req, res) => res.json(await websiteService.updatePage(req.ctx, req.params.slug, req.body)));
@@ -27,4 +32,4 @@ const getReviews = asyncHandler(async (req, res) => res.json({ items: await webs
 const putReviews = asyncHandler(async (req, res) => res.json(await websiteService.updateReviews(req.ctx, req.body.reviews || req.body)));
 const putSeo = asyncHandler(async (req, res) => res.json(await websiteService.updateSeo(req.ctx, req.body.seo || req.body)));
 
-module.exports = { publicSite, publicBookingData, getConfig, putContent, putTheme, publish, getPages, postPage, putPage, deletePage, getReviews, putReviews, putSeo };
+module.exports = { publicSite, publicBookingData, getConfig, putContent, putTheme, publish, postMedia, deleteGalleryImage, putGalleryOrder, getPages, postPage, putPage, deletePage, getReviews, putReviews, putSeo };

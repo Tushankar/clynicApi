@@ -14,6 +14,7 @@ process.env.PLATFORM_DOMAIN = 'localhost';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
+const sharp = require('sharp');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const mongoose = require('mongoose');
 
@@ -135,6 +136,53 @@ test('(security) a malicious logoUrl (javascript:/data:) is never returned to th
   const a2 = await websiteService.getPublicSite('alpha-dental');
   assert.equal(a2.site.theme.logoUrl, 'https://cdn.example/logo.png', 'a valid https logo is kept');
   console.log('  ✓ (security) logoUrl is http(s)-validated before public exposure');
+});
+
+test('CMS media: uploaded gallery images resolve to signed URLs and survive a content save', async () => {
+  const ctx = { clinicId: 'org_p2', actorId: 'u_org_p2', actorRole: 'owner' };
+  const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#0E8C72' } }).png().toBuffer();
+  const cfg = await websiteService.uploadImage(ctx, 'gallery', { buffer: png, mimetype: 'image/png' });
+  assert.equal(cfg.content.gallery.length, 1);
+  assert.ok(cfg.content.gallery[0].startsWith('upload:website/'), 'stores a KEY reference, never a URL');
+  assert.ok(/^https?:\/\/.+\/api\/files\/blob\?t=/.test(cfg.media.gallery[0].url), 'preview is an absolute signed URL');
+  assert.equal(cfg.media.gallery[0].uploaded, true);
+
+  // The CMS PUTs `content` back verbatim when saving text — the upload ref must survive.
+  const after = await websiteService.updateContent(ctx, cfg.content);
+  assert.deepEqual(after.content.gallery, cfg.content.gallery, 'a content save does not drop uploaded images');
+
+  // …and the public site renders it as a loadable URL, not the raw ref.
+  await websiteService.setPublished(ctx, true);
+  const pub = await websiteService.getPublicSite('prem2');
+  assert.equal(pub.site.content.gallery.length, 1);
+  assert.ok(pub.site.content.gallery[0].startsWith('http'), 'public gallery exposes a URL, never "upload:"');
+
+  const removed = await websiteService.removeGalleryImage(ctx, 0);
+  assert.equal(removed.content.gallery.length, 0);
+  console.log('  ✓ gallery upload → key stored, signed URL rendered, survives content save, deletable');
+});
+
+test('(security) a forged "upload:" ref cannot expose another module\'s private file', async () => {
+  const ctx = { clinicId: 'org_p2', actorId: 'u_org_p2', actorRole: 'owner' };
+  // The CMS round-trips `content` through the client, so these refs are untrusted input.
+  const forged = [
+    'upload:reports/patient-report.pdf', // another module's private key
+    'upload:../../../etc/passwd', // traversal
+    'upload:website/../reports/x.jpg', // traversal inside our namespace
+    'javascript:alert(1)',
+    'data:text/html,evil',
+  ];
+  const saved = await websiteService.updateContent(ctx, { gallery: forged, hero: { imageUrl: 'upload:reports/secret.pdf' } });
+  assert.deepEqual(saved.content.gallery, [], 'every forged ref is rejected at the write boundary');
+  assert.equal(saved.content.hero.imageUrl, '', 'a forged hero ref is rejected too');
+
+  // Defense in depth: even if a bad ref reached the DB, rendering must not sign it.
+  await websiteService.setPublished(ctx, true);
+  await Clinic.updateOne({ clinicId: 'org_p2' }, { $set: { 'website.content.gallery': ['upload:reports/patient-report.pdf'] } });
+  const pub = await websiteService.getPublicSite('prem2');
+  assert.deepEqual(pub.site.content.gallery, [], 'a smuggled ref is never resolved into a signed URL');
+  await Clinic.updateOne({ clinicId: 'org_p2' }, { $set: { 'website.content.gallery': [] } });
+  console.log('  ✓ (security) upload: refs are namespace-locked; traversal + foreign keys rejected');
 });
 
 test('(e) public HTTP route is slug-scoped (no bleed via ?slug=)', async () => {

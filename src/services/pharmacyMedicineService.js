@@ -31,11 +31,15 @@ function clampNum(v, min, max, dflt) {
   return Math.min(max, Math.max(min, n));
 }
 
-/** Short-lived signed URL for a medicine's private image (or null). Never throws. */
+/**
+ * Short-lived signed URL for a medicine's private image (or null). Never throws.
+ * ABSOLUTE (`.url`) on purpose: the public storefront and the clinic website run on a
+ * different origin than the API, so a relative path would resolve against the web host.
+ */
 function imageUrlFor(ctx, med) {
   if (!med || !med.imageStorageKey) return null;
   try {
-    return storage.getSignedUrl({ clinicId: ctx.clinicId, key: med.imageStorageKey, meta: { mime: 'image/jpeg' } }).path;
+    return storage.getSignedUrl({ clinicId: ctx.clinicId, key: med.imageStorageKey, meta: { mime: 'image/jpeg' } }).url;
   } catch {
     return null;
   }
