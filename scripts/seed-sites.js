@@ -9,7 +9,7 @@ const { connectDB, disconnectDB } = require('../src/config/db');
 const { Clinic, Doctor } = require('../src/models');
 
 const CLYNIC_ID = 'org_3FtYI1hcVjcxoVB0ABj6XAcJKDC';
-const img = (seed, w, h) => `https://picsum.photos/seed/${seed}/${w}/${h}`;
+const { hero: heroImg, gallery: galleryImgs } = require('./lib/clinicImages');
 const mapOf = (q) => `https://maps.google.com/maps?q=${encodeURIComponent(q)}&output=embed`;
 const AVAIL = { mon: [{ start: '10:00', end: '14:00' }, { start: '16:00', end: '19:00' }], tue: [{ start: '10:00', end: '14:00' }], wed: [{ start: '10:00', end: '14:00' }, { start: '16:00', end: '19:00' }], thu: [{ start: '10:00', end: '14:00' }], fri: [{ start: '10:00', end: '14:00' }, { start: '16:00', end: '19:00' }], sat: [{ start: '10:00', end: '13:00' }], sun: [] };
 
@@ -35,14 +35,14 @@ async function run() {
       published: true, template: 'modern-specialist',
       theme: { primaryColor: '#14b8a6', accentColor: '#0f766e', logoUrl: '' },
       content: {
-        hero: { headline: 'Precision dental care, beautifully done', tagline: 'Advanced, gentle dentistry in the heart of Kolkata — same-day appointments available.', imageUrl: img('clynic-hero', 1600, 1000) },
+        hero: { headline: 'Precision dental care, beautifully done', tagline: 'Advanced, gentle dentistry in the heart of Kolkata — same-day appointments available.', imageUrl: heroImg('suite') },
         about: 'Clynic brings specialist-grade dentistry to Kolkata: painless procedures, transparent pricing, and a calm, modern clinic. Our team blends experience with the latest technology so every visit is quick, comfortable, and reassuring.',
         services: [
           { name: 'Root Canal Treatment', description: 'Painless, single-sitting RCT with modern rotary tools.', icon: 'activity' },
           { name: 'Dental Implants', description: 'Titanium implants that look and feel natural, with lifetime support.', icon: 'shield' },
           { name: 'Clear Aligners', description: 'Discreet orthodontics — straighten your smile invisibly.', icon: 'heart' },
         ],
-        gallery: [img('clynic-1', 900, 700), img('clynic-2', 900, 700), img('clynic-3', 900, 700), img('clynic-4', 900, 700)],
+        gallery: galleryImgs(4, 0),
         contact: { phone: '033-4000-1000', email: 'care@clynic.example', whatsapp: '+91 98300 00000', address: 'Park Street, Kolkata 700016' },
         mapEmbed: mapOf('Park Street, Kolkata'),
       },
@@ -64,14 +64,14 @@ async function run() {
       published: true, template: 'warm-family',
       theme: { primaryColor: '#ea7317', accentColor: '#f4a259', logoUrl: '' },
       content: {
-        hero: { headline: 'Caring for your family, every step of the way', tagline: 'Friendly family medicine and paediatrics — where everyone feels at home.', imageUrl: img('sunrise-hero', 1600, 1000) },
+        hero: { headline: 'Caring for your family, every step of the way', tagline: 'Friendly family medicine and paediatrics — where everyone feels at home.', imageUrl: heroImg('consult') },
         about: 'Sunrise Family Clinic has looked after Salt Lake families for over a decade. From your little one’s first check-up to grandparents’ routine care, our warm, unhurried approach puts your family first.',
         services: [
           { name: 'Family Medicine', description: 'Everyday care for the whole family under one roof.', icon: 'heart' },
           { name: 'Child Health & Vaccination', description: 'Gentle paediatric care and complete immunisation.', icon: 'shield' },
           { name: 'Health Check-ups', description: 'Preventive packages tailored to every age.', icon: 'activity' },
         ],
-        gallery: [img('sunrise-1', 900, 700), img('sunrise-2', 900, 700), img('sunrise-3', 900, 700)],
+        gallery: galleryImgs(3, 3),
         contact: { phone: '033-2222-3333', email: 'hello@sunrise.example', whatsapp: '+91 90000 11111', address: 'Sector V, Salt Lake, Kolkata 700091' },
         mapEmbed: mapOf('Salt Lake Sector V, Kolkata'),
       },
@@ -94,14 +94,14 @@ async function run() {
       published: true, template: 'clean-clinical',
       theme: { primaryColor: '#2563eb', accentColor: '#1d4ed8', logoUrl: '' },
       content: {
-        hero: { headline: 'Move better. Live better.', tagline: 'Specialist orthopaedic and sports-injury care with rapid recovery pathways.', imageUrl: img('apex-hero', 1600, 1000) },
+        hero: { headline: 'Move better. Live better.', tagline: 'Specialist orthopaedic and sports-injury care with rapid recovery pathways.', imageUrl: heroImg('imaging') },
         about: 'Apex Orthopaedics is a dedicated bone-and-joint centre led by senior surgeons. We combine precise diagnosis, minimally invasive surgery and structured physiotherapy to get you back on your feet, fast.',
         services: [
           { name: 'Joint Replacement', description: 'Advanced knee and hip replacement with quick recovery.', icon: 'activity' },
           { name: 'Sports Injury', description: 'Arthroscopy and rehab for athletes of every level.', icon: 'shield' },
           { name: 'Spine Care', description: 'Non-surgical and surgical solutions for back and neck pain.', icon: 'heart' },
         ],
-        gallery: [img('apex-1', 900, 700), img('apex-2', 900, 700), img('apex-3', 900, 700)],
+        gallery: galleryImgs(3, 5),
         contact: { phone: '033-5555-7777', email: 'appointments@apex.example', whatsapp: '+91 91234 56789', address: 'Ballygunge, Kolkata 700019' },
         mapEmbed: mapOf('Ballygunge, Kolkata'),
       },
