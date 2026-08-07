@@ -1,6 +1,7 @@
 'use strict';
 
 const { Patient, Appointment, Invoice, Expense, Prescription, ClinicalNote, LabRequest, Report } = require('../models');
+const { balanceDue } = require('../lib/revenue'); // ONE definition of what an invoice still owes
 const { tenantRepo } = require('../lib/TenantRepository');
 const AppError = require('../utils/AppError');
 
@@ -56,7 +57,7 @@ const ENTITIES = {
     fetch: (ctx, range) =>
       tenantRepo(Invoice, ctx, { audit: false }).find(rangeFilter('createdAt', range), { sort: { createdAt: -1 }, limit: MAX_ROWS, lean: true }),
     headers: ['Invoice', 'Patient', 'Subtotal', 'GST %', 'GST amount', 'Total', 'Paid', 'Refunded', 'Balance', 'Status', 'Date'],
-    row: (i) => [i.invoiceNumber, i.patientName, i.subtotal, i.gstRate, i.gstAmount, i.total, i.amountPaid, i.amountRefunded, Math.max(0, Math.round((i.total - i.amountPaid) * 100) / 100), i.status, iso(i.createdAt)],
+    row: (i) => [i.invoiceNumber, i.patientName, i.subtotal, i.gstRate, i.gstAmount, i.total, i.amountPaid, i.amountRefunded, balanceDue(i), i.status, iso(i.createdAt)],
   },
   expenses: {
     fetch: (ctx, range) =>

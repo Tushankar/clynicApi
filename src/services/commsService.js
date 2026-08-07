@@ -160,6 +160,24 @@ async function sendCancellationNotice(ctx, clinic, patient, appointment, { reaso
 }
 
 async function sendCampaignMessage(ctx, clinic, patient, kind) {
+  // Consent gate. Every marketing path — birthday, follow-up, re-engagement — funnels through
+  // here, so this one check covers all of them and cannot be bypassed by a new caller forgetting.
+  // TRANSACTIONAL messages (reminders, OTP, invoices) deliberately do NOT pass through this
+  // function and are unaffected: opting out of birthday wishes must not stop a patient being told
+  // their appointment moved.
+  if (patient?.marketingOptOut) {
+    await messageLog.record(ctx, {
+      patientId: patient._id,
+      patientName: patient.name,
+      template: kind,
+      channel: 'email',
+      to: patient.email || patient.phone || '',
+      status: 'skipped',
+      error: 'patient opted out of marketing messages',
+    }).catch(() => {});
+    return { channels: [], skipped: 'opted_out' };
+  }
+
   const { subject, text, html } = await renderForPatient(clinic, patient, kind);
   const logBase = { patientId: patient._id, patientName: patient.name, template: kind, subject };
   const results = [];

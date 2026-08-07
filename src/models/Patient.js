@@ -49,6 +49,23 @@ const patientSchema = new mongoose.Schema(
     lastVisitAt: { type: Date, default: null },
     visitCount: { type: Number, default: 0 },
     tags: { type: [String], default: [] }, // e.g. 'high_value', 'repeat'
+
+    /**
+     * Marketing consent. There was previously NO way to record that a patient had asked to stop
+     * receiving campaign messages, and no code path that would have honoured one — birthday and
+     * re-engagement mail went to every patient with a contact, indefinitely. For unsolicited
+     * commercial messaging under India's DPDP Act that is a legal exposure, not a preference.
+     *
+     * Scope is MARKETING ONLY. Transactional messages — appointment reminders, OTPs, invoices,
+     * "your turn" nudges — are not covered by this flag: a patient who opts out of birthday wishes
+     * still needs to be told their appointment moved. `commsService.sendCampaignMessage` is the
+     * single funnel every campaign goes through, so the check lives there.
+     *
+     * Defaults to false (opted IN) to preserve existing behaviour for records created before this
+     * field existed; flipping the default is a business/legal decision, not a code one.
+     */
+    marketingOptOut: { type: Boolean, default: false },
+    marketingOptOutAt: { type: Date, default: null },
     followUpAt: { type: Date, default: null }, // next recommended follow-up (powers CRM "follow-ups due")
   },
   { timestamps: true }

@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const { Invoice, Appointment, Patient, Doctor, Expense, PharmacyExpense, AvailabilityBlock } = require('../models');
 const { planHasFeature } = require('../config/plans');
+const revenueLib = require('../lib/revenue');
 
 /**
  * Owner analytics (§5.9) — CLINIC-SCOPED aggregations (revenue, patients, doctors, peak
@@ -111,13 +112,13 @@ async function overview(ctx, { from, to, branchId, plan } = {}) {
   const invMatch = { clinicId, deletedAt: null, createdAt: { $gte: start, $lte: end }, ...bm };
   const apptMatch = { clinicId, deletedAt: null, scheduledAt: { $gte: start, $lte: end }, ...bm };
 
-  const [revenueByDayAgg, revenueTotalAgg, statusAgg, hourAgg, doctorAgg, patientIds] = await Promise.all([
-    Invoice.aggregate([
-      { $match: invMatch },
-      { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: TZ } }, revenue: { $sum: '$amountPaid' } } },
-      { $sort: { _id: 1 } },
-    ]),
-    Invoice.aggregate([{ $match: invMatch }, { $group: { _id: null, revenue: { $sum: '$amountPaid' }, invoices: { $sum: 1 } } }]),
+  const [revenueDaily, invoiceCountAgg, statusAgg, hourAgg, doctorAgg, patientIds] = await Promise.all([
+    // ONE revenue definition — cash basis, net of refunds (lib/revenue.js). This chart used to
+    // bucket by invoice `createdAt` and sum `amountPaid`, which credited an invoice's whole
+    // lifetime of payments to the month it was raised, and never subtracted refunds — so it
+    // disagreed with the P&L card rendered directly beneath it AND with the cash register.
+    revenueLib.collectedInRange(Invoice, ctx, { start, end, groupBy: '%Y-%m-%d', timezone: TZ, branchId }),
+    Invoice.aggregate([{ $match: invMatch }, { $group: { _id: null, invoices: { $sum: 1 } } }]),
     Appointment.aggregate([{ $match: apptMatch }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
     Appointment.aggregate([
       { $match: apptMatch },
@@ -215,14 +216,10 @@ async function overview(ctx, { from, to, branchId, plan } = {}) {
       { $match: { clinicId, deletedAt: null, status: { $in: ATTENDED_STATUSES }, scheduledAt: { $gte: monthStart, $lte: end }, ...bm } },
       { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$scheduledAt', timezone: TZ } }, count: { $sum: 1 } } },
     ]),
-    // P&L inputs (Premium/EXPENSES): money actually collected per month vs expenses.
+    // P&L revenue leg — the SAME helper the headline chart uses, so the two figures on this page
+    // can no longer disagree. (It also now nets off refunds, which this pipeline never did.)
     planHasFeature(plan, 'EXPENSES')
-      ? Invoice.aggregate([
-          { $match: { clinicId, deletedAt: null, ...bm } },
-          { $unwind: '$payments' },
-          { $match: { 'payments.paidAt': { $gte: monthStart, $lte: end } } },
-          { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$payments.paidAt', timezone: TZ } }, amount: { $sum: '$payments.amount' } } },
-        ])
+      ? revenueLib.collectedInRange(Invoice, ctx, { start: monthStart, end, groupBy: '%Y-%m', timezone: TZ, branchId })
       : Promise.resolve(null),
     planHasFeature(plan, 'EXPENSES')
       ? Expense.aggregate([
@@ -252,7 +249,10 @@ async function overview(ctx, { from, to, branchId, plan } = {}) {
 
   let pnl = null;
   if (revenueMonthAgg && expenseMonthAgg) {
-    const rev = byMonth(revenueMonthAgg, 'amount');
+    // revenueMonthAgg is now { byBucket: [{ key, revenue }] } from lib/revenue — map it onto the
+    // month series the same way the expense aggregates are mapped.
+    const revByMonth = new Map(revenueMonthAgg.byBucket.map((b) => [b.key, b.revenue]));
+    const rev = months.map((m) => revByMonth.get(m) || 0);
     const clinicExp = byMonth(expenseMonthAgg, 'amount');
     // Pharmacy costs are part of the same P&L (their revenue already is). Null on non-pharmacy
     // tiers, which contributes zero rather than breaking the series.
@@ -273,9 +273,14 @@ async function overview(ctx, { from, to, branchId, plan } = {}) {
   return {
     range: { from: start.toISOString(), to: end.toISOString() },
     revenue: {
-      total: revenueTotalAgg[0]?.revenue || 0,
-      invoices: revenueTotalAgg[0]?.invoices || 0,
-      byDay: revenueByDayAgg.map((d) => ({ date: d._id, revenue: d.revenue })),
+      // Net of refunds, cash basis. `collected` and `refunded` are exposed so the UI can show the
+      // gross and the deduction rather than an unexplained net figure.
+      total: revenueDaily.total,
+      collected: revenueDaily.collected,
+      refunded: revenueDaily.refunded,
+      basis: 'cash',
+      invoices: invoiceCountAgg[0]?.invoices || 0,
+      byDay: revenueDaily.byBucket.map((d) => ({ date: d.key, revenue: d.revenue, collected: d.collected, refunded: d.refunded })),
     },
     appointments: { total: totalAppts, byStatus, noShowRate },
     patients: { seen: patientIds.length, new: newPatients, returning: returningPatients },

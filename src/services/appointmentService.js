@@ -1,6 +1,7 @@
 'use strict';
 
 const { Appointment, Doctor, Patient, Invoice, Clinic, AuditLog } = require('../models');
+const { balanceDue } = require('../lib/revenue'); // ONE definition of what an invoice still owes
 const { tenantRepo } = require('../lib/TenantRepository');
 const { nextSequence } = require('../lib/sequence');
 const { dayRange, dateKey, addMinutes, parseDateOnly } = require('../lib/datetime');
@@ -458,7 +459,7 @@ async function listWithBilling(ctx, query = {}) {
     const inv = invByAppt.get(String(a._id));
     let billing;
     if (inv) {
-      const due = round2(inv.total - inv.amountPaid);
+      const due = balanceDue(inv);
       billing = {
         fee,
         invoiceId: inv.invoiceId,

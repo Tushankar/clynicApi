@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const { Invoice, Appointment, Patient, Doctor, QueueEntry } = require('../models');
 const { dayRange, dateKey } = require('../lib/datetime');
+const revenueLib = require('../lib/revenue');
 const queueService = require('./queueService');
 const branchService = require('./branchService');
 
@@ -79,10 +80,10 @@ async function summary(ctx, { branchId } = {}) {
           },
         },
       ]),
-      Invoice.aggregate([
-        { $match: invMatch },
-        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: TZ } }, revenue: { $sum: '$amountPaid' } } },
-      ]),
+      // Same revenue definition as Analytics and the cash register (lib/revenue.js): cash basis,
+      // net of refunds. This used to bucket by invoice `createdAt` and sum `amountPaid`, so the
+      // dashboard's headline revenue disagreed with both of the other two surfaces.
+      revenueLib.collectedInRange(Invoice, ctx, { start: weekStart, end: weekEnd, groupBy: '%Y-%m-%d', timezone: TZ, branchId }),
       QueueEntry.aggregate([
         { $match: waitMatch },
         { $project: { day: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: TZ } }, waitMs: { $subtract: ['$calledAt', '$createdAt'] } } },
@@ -103,7 +104,7 @@ async function summary(ctx, { branchId } = {}) {
 
   // --- Bucket the weekly aggregations into aligned 7-day series ---
   const apptMap = Object.fromEntries(apptByDay.map((d) => [d._id, d]));
-  const revMap = Object.fromEntries(revByDay.map((d) => [d._id, d.revenue]));
+  const revMap = Object.fromEntries(revByDay.byBucket.map((b) => [b.key, b.revenue]));
   const waitMap = Object.fromEntries(waitByDay.map((d) => [d._id, Math.round(d.avgWaitMs / 60000)]));
 
   const patientsSeries = days.map((d) => (apptMap[d.key]?.patients?.length) || 0);

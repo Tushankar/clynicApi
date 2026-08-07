@@ -40,7 +40,10 @@ const messageLogSchema = new mongoose.Schema(
     },
     subject: { type: String, trim: true },
     to: { type: String, trim: true },
-    status: { type: String, enum: ['sent', 'failed'], default: 'sent' },
+    // 'skipped' records a send that was deliberately SUPPRESSED (e.g. the patient opted out of
+    // marketing). Worth logging rather than dropping silently: staff asking "why didn't this go?"
+    // need an answer, and it evidences that consent was honoured.
+    status: { type: String, enum: ['sent', 'failed', 'skipped'], default: 'sent' },
     error: { type: String },
     sentBy: { type: String, default: null }, // actor id, or 'system' for automated sends
     sentByRole: { type: String, default: null },

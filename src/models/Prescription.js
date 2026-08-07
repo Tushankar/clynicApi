@@ -24,6 +24,11 @@ const prescriptionSchema = new mongoose.Schema(
     doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true },
     patientName: { type: String, trim: true }, // denormalized for fast lists + printing
     doctorName: { type: String, trim: true },
+    // Prescriber credentials SNAPSHOTTED at issue time. A prescription is a legal document: it must
+    // show the registration number that was valid when it was written, so these are copied rather
+    // than joined from the Doctor record (which can change later).
+    doctorQualifications: { type: String, trim: true, default: '' },
+    doctorRegistrationNumber: { type: String, trim: true, default: '' },
     items: { type: [itemSchema], default: [] },
     notes: { type: String, trim: true },
     diagnosis: { type: String, trim: true },

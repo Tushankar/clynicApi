@@ -240,6 +240,64 @@ test('B-3: a suspended clinic is locked out of the staff app', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// H-37/H-10 — ONE revenue definition, net of refunds.
+// ---------------------------------------------------------------------------
+test('H-10: revenue subtracts refunds, and every surface agrees', async () => {
+  const rev = require('../src/lib/revenue');
+  const p = await patientService.createPatient(ctxA, { name: 'Refund Case', phone: '9333000111' });
+  const inv = await invoiceService.create(ctxA, { patientId: p._id, items: [{ description: 'Procedure', amount: 1000, quantity: 1 }] });
+  await invoiceService.recordPayment(ctxA, inv._id, { amount: 1000, method: 'cash' });
+  await invoiceService.refund(ctxA, inv._id, { amount: 400, reason: 'partial refund' });
+
+  const start = new Date(Date.now() - 86400_000);
+  const end = new Date(Date.now() + 86400_000);
+  const r = await rev.collectedInRange(Invoice, ctxA, { start, end });
+
+  assert.equal(r.collected >= 1000, true, 'the ₹1000 payment is counted');
+  assert.equal(r.refunded >= 400, true, 'the ₹400 refund is counted');
+  assert.equal(r.total, rev.round2(r.collected - r.refunded), 'revenue is collected MINUS refunded');
+  assert.ok(r.total < r.collected, 'net revenue is lower than gross — refunds are no longer ignored');
+});
+
+test('H-68: balanceDue is one definition, and a cancelled invoice owes nothing', () => {
+  const { balanceDue } = require('../src/lib/revenue');
+  assert.equal(balanceDue({ total: 500, amountPaid: 0, status: 'unpaid' }), 500);
+  assert.equal(balanceDue({ total: 500, amountPaid: 200, status: 'partially_paid' }), 300);
+  assert.equal(balanceDue({ total: 500, amountPaid: 500, status: 'paid' }), 0);
+  // Screens excluded these by status while the CSV export did not — the export used to show 500.
+  assert.equal(balanceDue({ total: 500, amountPaid: 0, status: 'cancelled' }), 0, 'a cancelled invoice is not a due');
+  assert.equal(balanceDue({ total: 500, amountPaid: 500, status: 'refunded' }), 0);
+  assert.equal(balanceDue({ total: 500, amountPaid: 800, status: 'partially_paid' }), 0, 'overpayment clamps at zero, never negative');
+});
+
+// ---------------------------------------------------------------------------
+// H-36 — marketing consent is honoured; transactional mail is not affected.
+// ---------------------------------------------------------------------------
+test('H-36: an opted-out patient gets no marketing, but still gets transactional mail', async () => {
+  const commsService = require('../src/services/commsService');
+  const emailAdapter = require('../src/services/notifications/emailAdapter');
+  const clinic = await Clinic.findOne({ clinicId: 'org_A' }).lean();
+
+  const optedOut = await patientService.createPatient(ctxA, { name: 'No Marketing', email: 'stop@example.com', marketingOptOut: true });
+  const optedIn = await patientService.createPatient(ctxA, { name: 'Happy To Hear', email: 'yes@example.com' });
+
+  assert.equal(optedOut.marketingOptOut, true, 'staff can record the opt-out');
+
+  emailAdapter.clearSentLog();
+  const suppressed = await commsService.sendCampaignMessage(ctxA, clinic, optedOut, 'birthday');
+  assert.equal(suppressed.skipped, 'opted_out', 'the campaign is suppressed');
+  assert.equal(emailAdapter.getSentLog().filter((m) => m.to === 'stop@example.com').length, 0, 'nothing was sent');
+
+  const allowed = await commsService.sendCampaignMessage(ctxA, clinic, optedIn, 'birthday');
+  assert.notEqual(allowed.skipped, 'opted_out', 'an opted-in patient is unaffected');
+
+  // The suppression is recorded rather than silently dropped, so staff can answer "why not sent?".
+  const { MessageLog } = require('../src/models');
+  const logged = await MessageLog.findOne({ clinicId: 'org_A', patientId: optedOut._id, status: 'skipped' }).lean();
+  assert.ok(logged, 'the skip is written to the communications log');
+});
+
+// ---------------------------------------------------------------------------
 // B-12 — signed file links are absolute (they are consumed cross-origin).
 // ---------------------------------------------------------------------------
 test('B-12: getSignedUrl returns an absolute url and no relative footgun', () => {

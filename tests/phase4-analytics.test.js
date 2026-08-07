@@ -31,9 +31,24 @@ const DR_A = new mongoose.Types.ObjectId(); // one stable doctor for the "most-v
 async function appt(clinicId, { status, doctorName = 'Dr A', doctorId = DR_A, patientId, when = new Date() }) {
   return new Appointment({ clinicId, branchId: new mongoose.Types.ObjectId(), patientId: patientId || new mongoose.Types.ObjectId(), doctorId, doctorName, scheduledAt: when, status, patientName: 'X' }).save();
 }
-async function invoice(clinicId, amountPaid) {
+async function invoice(clinicId, amountPaid, paidAt = new Date()) {
   seq += 1;
-  return Invoice.create({ clinicId, branchId: new mongoose.Types.ObjectId(), invoiceNumber: `INV-A${seq}`, patientId: new mongoose.Types.ObjectId(), patientName: 'X', items: [{ description: 'c', amount: amountPaid }], subtotal: amountPaid, total: amountPaid, amountPaid, status: 'paid' });
+  // Revenue is cash-basis (lib/revenue.js), so a paid invoice must carry the payment row that
+  // recordPayment always writes alongside amountPaid (invoiceService.js:116). Setting amountPaid
+  // alone produced a shape the application cannot actually create.
+  return Invoice.create({
+    clinicId,
+    branchId: new mongoose.Types.ObjectId(),
+    invoiceNumber: `INV-A${seq}`,
+    patientId: new mongoose.Types.ObjectId(),
+    patientName: 'X',
+    items: [{ description: 'c', amount: amountPaid }],
+    subtotal: amountPaid,
+    total: amountPaid,
+    amountPaid,
+    payments: [{ amount: amountPaid, method: 'cash', paidAt }],
+    status: 'paid',
+  });
 }
 
 before(async () => {

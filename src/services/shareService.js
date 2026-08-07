@@ -1,6 +1,7 @@
 'use strict';
 
 const { Clinic, Patient, Invoice, Prescription } = require('../models');
+const { balanceDue } = require('../lib/revenue'); // ONE definition of what an invoice still owes
 const { tenantRepo } = require('../lib/TenantRepository');
 const { sendNotification } = require('./notifications');
 const { whatsappReady } = require('./commsService');
@@ -62,7 +63,7 @@ async function deliver(ctx, clinic, patient, { subject, text, html, template }) 
 async function sendPaymentLink(ctx, invoiceId) {
   const invoice = await tenantRepo(Invoice, ctx, { audit: false }).findById(invoiceId, { lean: true });
   if (!invoice) throw new AppError(404, 'Invoice not found');
-  const balance = round2(invoice.total - invoice.amountPaid);
+  const balance = balanceDue(invoice);
   if (!(balance > 0)) throw new AppError(400, 'This invoice has no outstanding balance');
 
   const [clinic, patient] = await Promise.all([loadClinic(ctx), loadPatient(ctx, invoice.patientId)]);

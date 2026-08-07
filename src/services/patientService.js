@@ -3,6 +3,7 @@
 const { Patient, Appointment, Invoice } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 const { nextSequence } = require('../lib/sequence');
+const { balanceDue } = require('../lib/revenue'); // ONE definition of what an invoice still owes
 const AppError = require('../utils/AppError');
 
 /**
@@ -33,6 +34,7 @@ const WRITABLE_FIELDS = [
   'emergencyContact',
   'insurance',
   'tags',
+  'marketingOptOut',
   'followUpAt', // doctor/owner sets the next recommended follow-up (CRM)
 ];
 
@@ -81,12 +83,16 @@ async function attachBalances(ctx, patients) {
   const ids = patients.map((p) => p._id);
   const invoices = await tenantRepo(Invoice, ctx, { audit: false }).find(
     { patientId: { $in: ids }, status: { $in: ['unpaid', 'partially_paid'] } },
-    { projection: { patientId: 1, total: 1, amountPaid: 1 }, lean: true }
+    // `status` is projected because balanceDue() consults it (a cancelled/refunded invoice owes
+    // nothing). Dropping it would make every balance read as zero.
+    { projection: { patientId: 1, total: 1, amountPaid: 1, status: 1 }, lean: true }
   );
   const dueByPatient = new Map();
   for (const inv of invoices) {
     const k = String(inv.patientId);
-    dueByPatient.set(k, round2((dueByPatient.get(k) || 0) + ((inv.total || 0) - (inv.amountPaid || 0))));
+    // Same balanceDue() every other surface uses, so a patient's outstanding total here can never
+    // drift from what Billing, the export or the share link report.
+    dueByPatient.set(k, round2((dueByPatient.get(k) || 0) + balanceDue(inv)));
   }
   for (const p of patients) p.balanceDue = Math.max(0, dueByPatient.get(String(p._id)) || 0);
   return patients;

@@ -1,6 +1,7 @@
 'use strict';
 
 const { Clinic, Appointment, Doctor, Patient, Invoice, Prescription } = require('../models');
+const { balanceDue } = require('../lib/revenue'); // ONE definition of what an invoice still owes
 const { tenantRepo } = require('../lib/TenantRepository');
 const { verifyToken } = require('../lib/publicLinks');
 const { planHasFeature } = require('../config/plans');
@@ -171,7 +172,7 @@ async function loadPay(token) {
 }
 
 function invoiceView(inv) {
-  const balance = round2(inv.total - inv.amountPaid);
+  const balance = balanceDue(inv);
   return {
     id: String(inv._id),
     invoiceNumber: inv.invoiceNumber,

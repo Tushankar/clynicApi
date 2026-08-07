@@ -27,6 +27,8 @@ async function create(ctx, data) {
     branchId: branch._id,
     patientName: patient.name,
     doctorName: doctor.name,
+    doctorQualifications: doctor.qualifications || '',
+    doctorRegistrationNumber: doctor.registrationNumber || '',
     items: cleanItems,
     notes,
     diagnosis,
