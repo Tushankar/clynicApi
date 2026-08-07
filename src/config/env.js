@@ -106,8 +106,15 @@ const config = Object.freeze({
 
   // Email (Nodemailer). Without SMTP creds we fall back to a JSON transport that
   // "sends" to the log — enough to verify reminders + OTP in dev (10.5).
+  //
+  // In PRODUCTION that fallback is dangerous, so SMTP_HOST is required there. Previously the app
+  // booted happily without it and every message — patient OTP logins, appointment reminders,
+  // invoice links, subscription dunning — was handed to the JSON sink, returned ok:true, and was
+  // written to the communications log as SENT. The "this was fake" console line is itself
+  // suppressed in production (emailAdapter), so the failure was completely silent: patients simply
+  // could not sign in and no one would know why. Fail at boot instead, like every other driver.
   mail: {
-    host: process.env.SMTP_HOST || '',
+    host: isProd ? required('SMTP_HOST') : process.env.SMTP_HOST || '',
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === 'true',
     user: process.env.SMTP_USER || '',
