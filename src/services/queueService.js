@@ -2,6 +2,7 @@
 
 const { QueueEntry } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
+const { dateKey } = require('../lib/datetime');
 const realtime = require('../realtime/io');
 const AppError = require('../utils/AppError');
 
@@ -17,8 +18,50 @@ function firstName(name) {
   return (name || 'Patient').trim().split(/\s+/)[0];
 }
 
-async function getActiveEntries(ctx, branchId) {
-  return repo(ctx).find({ branchId, status: { $in: ACTIVE } }, { sort: { tokenNumber: 1, createdAt: 1 }, lean: true });
+/**
+ * The LIVE queue is today's queue.
+ *
+ * This used to select on status alone, so an entry left 'waiting' (patient walked out) or
+ * 'in_consultation' (doctor forgot to hit Complete) stayed live indefinitely — the next morning
+ * the TV and reception still showed it, and its token collided with today's, because tokens
+ * restart at 1 each day. Scoping to the current dayKey makes the queue self-clearing.
+ *
+ * Rows created before dayKey existed have `dayKey: undefined`; they are treated as belonging to
+ * their creation day so they cannot resurrect into today's list.
+ */
+async function getActiveEntries(ctx, branchId, { day = new Date() } = {}) {
+  return repo(ctx).find(
+    { branchId, dayKey: dateKey(day), status: { $in: ACTIVE } },
+    { sort: { tokenNumber: 1, createdAt: 1 }, lean: true }
+  );
+}
+
+/**
+ * End-of-day sweep: close out anything still active from a PREVIOUS day. Without this the rows
+ * linger forever as 'waiting'/'in_consultation' — invisible now that reads are day-scoped, but
+ * still wrong in the data and in any historical report. Idempotent; safe to run repeatedly.
+ */
+async function closeStaleEntries(ctx, { day = new Date() } = {}) {
+  const today = dateKey(day);
+  const res = await QueueEntry.updateMany(
+    { clinicId: ctx.clinicId, status: { $in: ACTIVE }, $or: [{ dayKey: { $lt: today } }, { dayKey: null }] },
+    { $set: { status: 'skipped', finishedAt: new Date() } }
+  );
+  return { closed: res.modifiedCount || 0 };
+}
+
+/**
+ * Scheduled variant of closeStaleEntries: sweeps EVERY clinic. Called from the 10-minute job tick.
+ * System job, so it queries the model directly (cross-tenant, no per-request ctx) — the dayKey
+ * comparison is what bounds it, and each row carries its own clinicId.
+ */
+async function sweepStaleQueues(now = new Date()) {
+  const today = dateKey(now);
+  const res = await QueueEntry.updateMany(
+    { status: { $in: ACTIVE }, $or: [{ dayKey: { $lt: today } }, { dayKey: null }] },
+    { $set: { status: 'skipped', finishedAt: new Date() } }
+  );
+  return { closed: res.modifiedCount || 0 };
 }
 
 /**
@@ -59,7 +102,9 @@ async function emit(ctx, branchId) {
 }
 
 async function recomputeWaits(ctx, branchId) {
-  const waiting = await repo(ctx).find({ branchId, status: 'waiting' }, { sort: { tokenNumber: 1, createdAt: 1 } });
+  // Day-scoped like every other live-queue read, so yesterday's leftovers can't inflate today's
+  // estimated waits between midnight and the next sweep.
+  const waiting = await repo(ctx).find({ branchId, dayKey: dateKey(new Date()), status: 'waiting' }, { sort: { tokenNumber: 1, createdAt: 1 } });
   await Promise.all(
     waiting.map((e, i) => repo(ctx).updateById(e._id, { estimatedWaitMinutes: (i + 1) * AVG_CONSULT_MINUTES }))
   );
@@ -81,6 +126,8 @@ async function addEntry(ctx, appointment) {
         doctorName: appointment.doctorName,
         tokenNumber: appointment.tokenNumber,
         status: 'waiting',
+        // Stamp the clinic-day so the live queue is a TODAY view (see getActiveEntries).
+        dayKey: dateKey(appointment.scheduledAt || new Date()),
       });
     } catch (err) {
       if (err.code === 11000) entry = await r.findOne({ appointmentId: appointment._id });
@@ -95,7 +142,9 @@ async function addEntry(ctx, appointment) {
 async function callNext(ctx, { branchId, doctorId } = {}) {
   if (!branchId) throw new AppError(400, 'branchId is required');
   const r = repo(ctx);
-  const filter = { branchId, status: 'waiting' };
+  // Only today's queue is callable — otherwise "Call next" could summon a patient left over from
+  // a previous day before the stale sweep has run.
+  const filter = { branchId, dayKey: dateKey(new Date()), status: 'waiting' };
   if (doctorId) filter.doctorId = doctorId;
   const next = (await r.find(filter, { sort: { tokenNumber: 1, createdAt: 1 }, limit: 1 }))[0];
   if (!next) throw new AppError(409, 'No one is waiting in the queue');
@@ -167,4 +216,4 @@ async function reQueue(ctx, entryId) {
   return updated;
 }
 
-module.exports = { snapshot, emit, addEntry, callNext, complete, skip, reQueue, getActiveEntries, AVG_CONSULT_MINUTES };
+module.exports = { snapshot, emit, addEntry, callNext, complete, skip, reQueue, getActiveEntries, closeStaleEntries, sweepStaleQueues, AVG_CONSULT_MINUTES };

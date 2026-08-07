@@ -12,5 +12,7 @@ router.get('/me', ctrl.me);
 router.get('/analytics', ctrl.analytics);
 router.get('/clinics', ctrl.clinics); // per-clinic operational list
 router.post('/clinics/:clinicId/plan', ctrl.setPlan); // force a clinic's plan (support)
+// Suspend / restore a clinic — the platform's only lever for non-payment, abuse or offboarding.
+router.post('/clinics/:clinicId/suspend', ctrl.setSuspended);
 
 module.exports = router;

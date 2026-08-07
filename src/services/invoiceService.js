@@ -117,7 +117,7 @@ async function recordPayment(ctx, id, { amount, method, reference, idempotencyKe
   next.status = deriveStatus({ ...inv.toObject(), amountPaid });
 
   const updated = await repo(ctx).updateById(id, next);
-  notificationService.emit(ctx, { type: 'payment_received', message: `Payment of ₹${applied} received for ${inv.patientName || 'patient'} (${inv.invoiceNumber})`, link: '/billing' }).catch(() => {});
+  notificationService.emit(ctx, { type: 'payment_received', message: `Payment of ₹${applied} received for ${inv.patientName || 'patient'} (${inv.invoiceNumber})`, link: '/dashboard/billing' }).catch(() => {});
   return updated;
 }
 
@@ -145,7 +145,7 @@ async function refund(ctx, id, { amount, reason }) {
 
   const updated = await repo(ctx).updateById(id, next);
   const via = gatewayResult.onlineRefunded > 0 ? ` (₹${gatewayResult.onlineRefunded} returned to the original payment method)` : '';
-  notificationService.emit(ctx, { type: 'payment_refunded', message: `Refund of ₹${amt} issued (${inv.invoiceNumber})${via}`, link: '/billing' }).catch(() => {});
+  notificationService.emit(ctx, { type: 'payment_refunded', message: `Refund of ₹${amt} issued (${inv.invoiceNumber})${via}`, link: '/dashboard/billing' }).catch(() => {});
   return updated;
 }
 

@@ -14,7 +14,12 @@ const MAX_ROWS = 20000;
 
 const esc = (v) => {
   if (v === null || v === undefined) return '';
-  const s = String(v);
+  let s = String(v);
+  // CSV/formula injection (CWE-1236): a cell starting with = + - @ (or tab/CR) is executed as a
+  // formula by Excel/Sheets. Patient names, phones and reasons reach these exports straight from
+  // the UNAUTHENTICATED public booking form, so a visitor could plant `=HYPERLINK(...)` and have
+  // it run on the owner's machine. Prefix with an apostrophe so it is always read as text.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 const iso = (d) => (d ? new Date(d).toISOString() : '');

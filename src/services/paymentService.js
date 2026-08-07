@@ -150,7 +150,7 @@ async function reconcileRefundStatus(ctx, payment, { refundId, amount, status })
   await payment.save();
   if (status === 'failed') {
     require('./notificationService')
-      .emit(ctx, { type: 'other', message: `A refund (${refundId}) FAILED at the gateway — the patient may not have received their money. Please check billing.`, link: '/billing' })
+      .emit(ctx, { type: 'other', message: `A refund (${refundId}) FAILED at the gateway — the patient may not have received their money. Please check billing.`, link: '/dashboard/billing' })
       .catch(() => {});
   }
 }
@@ -196,7 +196,17 @@ async function handleWebhook(rawBody, signature, eventIdHeader) {
     const entity = event.payload?.payment?.entity || {};
     const orderId = entity.order_id;
     const paymentId = entity.id;
-    if (orderId && paymentId) {
+    // Only a genuine SETTLEMENT credits the invoice. The `payment.` prefix also matches
+    // `payment.failed`, `payment.authorized` and `payment.pending`; crediting on those marks an
+    // invoice paid for money that was never settled — a declined card would zero the balance.
+    // Razorpay signals settlement two ways: the `payment.captured` topic and `entity.status`.
+    // Accept either (some payloads omit the entity status), but never credit when the entity
+    // explicitly reports a non-captured state.
+    const entityStatus = entity.status;
+    const claimsCaptured = type === 'payment.captured' || entityStatus === 'captured';
+    const contradicted = entityStatus !== undefined && entityStatus !== 'captured';
+    const captured = claimsCaptured && !contradicted;
+    if (orderId && paymentId && captured) {
       const payment = await Payment.findOne({ orderId });
       if (payment) {
         const ctx = { clinicId: payment.clinicId, actorId: 'system:webhook', actorRole: null };
@@ -254,7 +264,7 @@ async function reconcileStuckPayments({ now = new Date() } = {}) {
     } catch (err) {
       flagged += 1;
       require('./notificationService')
-        .emit(ctx, { type: 'other', message: `A payment needs manual reconciliation (order ${p.orderId}) — money may have been captured. Please check the gateway.`, link: '/billing' })
+        .emit(ctx, { type: 'other', message: `A payment needs manual reconciliation (order ${p.orderId}) — money may have been captured. Please check the gateway.`, link: '/dashboard/billing' })
         .catch(() => {});
     }
   }

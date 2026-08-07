@@ -67,7 +67,11 @@ async function createOrder(ctx, patient, { items, contactPhone, deliveryAddress,
   const medIds = [...new Set(items.map((i) => i && i.medicineId).filter(Boolean).map(String))];
   const meds = medIds.length ? await tenantRepo(Medicine, ctx, { audit: false }).find({ _id: { $in: medIds }, active: { $ne: false } }, { lean: true }) : [];
   const medById = Object.fromEntries(meds.map((m) => [String(m._id), m]));
-  const availMap = await inventoryService.availabilityMap(ctx, { medicineIds: meds.map((m) => m._id) });
+  // Count stock at the branch this order will actually be fulfilled from (set below, and the same
+  // branch the storefront advertises). A clinic-wide count would accept an order for stock held at
+  // another branch, which fulfilment then cannot allocate.
+  const fulfilBranch = await branchService.getOrCreatePrimaryBranch(ctx);
+  const availMap = await inventoryService.availabilityMap(ctx, { medicineIds: meds.map((m) => m._id), branchId: fulfilBranch._id });
 
   const orderItems = items.map((it, idx) => {
     const med = medById[String(it.medicineId)];
@@ -86,7 +90,8 @@ async function createOrder(ctx, patient, { items, contactPhone, deliveryAddress,
   const requiresPrescription = orderItems.some((i) => i.prescriptionRequired);
 
   const patientDoc = await tenantRepo(Patient, ctx, { audit: false }).findById(patient.patientId, { lean: true });
-  const branch = await branchService.getOrCreatePrimaryBranch(ctx);
+  // Same branch the stock was counted against above — resolved once so the two can never diverge.
+  const branch = fulfilBranch;
   const seq = await nextSequence(ctx.clinicId, 'medicineOrder');
 
   // GST invoice via the existing billing service (blended rate → invoice GST == sum of per-line GST).
@@ -152,6 +157,9 @@ async function uploadPrescription(ctx, patient, orderId, file) {
 async function payOrder(ctx, patient, orderId) {
   const order = await ownOrder(ctx, patient, orderId);
   if (!order.invoiceId) throw new AppError(400, 'This order has no invoice to pay');
+  // A cancelled order must not be payable. Without this the patient could still open a cancelled
+  // order and pay for goods that will never ship — and there is no automatic refund path back.
+  if (order.status === 'cancelled') throw new AppError(400, 'This order was cancelled and can no longer be paid');
   if (await invoicePaid(ctx, order.invoiceId)) throw new AppError(400, 'This order is already paid');
   return paymentService.createInvoiceOrder(ctx, order.invoiceId);
 }
@@ -188,7 +196,9 @@ async function getMine(ctx, patient, orderId) {
   const view = orderView(order, { paid });
   // The patient may view their OWN uploaded prescription via a short-lived signed URL.
   if (order.prescription && order.prescription.storageKey) {
-    view.prescriptionUrl = storage.getSignedUrl({ clinicId: ctx.clinicId, key: order.prescription.storageKey, meta: { mime: order.prescription.mimeType || 'application/octet-stream' } }).path;
+    // .url (absolute), never .path — see storeOpsService: a relative path resolves against the
+    // SPA origin and returns index.html, so the patient never sees their own uploaded Rx.
+    view.prescriptionUrl = storage.getSignedUrl({ clinicId: ctx.clinicId, key: order.prescription.storageKey, meta: { mime: order.prescription.mimeType || 'application/octet-stream' } }).url;
   }
   return view;
 }

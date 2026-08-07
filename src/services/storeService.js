@@ -8,6 +8,7 @@ const publicCtx = (clinic) => ({ clinicId: clinic.clinicId, actorId: 'public', a
 const { planHasFeature } = require('../config/plans');
 const medicineService = require('./pharmacyMedicineService');
 const inventoryService = require('./pharmacyInventoryService');
+const branchService = require('./branchService');
 const otpService = require('./otpService');
 const patientService = require('./patientService');
 const patientSession = require('./../lib/patientSession');
@@ -56,8 +57,24 @@ function sellableFilter(extra = {}) {
   return { active: { $ne: false }, sellingPrice: { $ne: null, $gt: 0 }, ...extra };
 }
 
+/**
+ * The branch the storefront sells FROM.
+ *
+ * Orders are pinned to the primary branch (storeOrderService.createOrder), and fulfilment deducts
+ * per branch — so availability must be counted for that same branch. Counting clinic-wide made the
+ * store advertise stock held elsewhere, charge for it, then fail fulfilment with no refund path.
+ * One helper so browse, product detail and order placement can never disagree.
+ */
+async function storeBranchId(ctx) {
+  const branch = await branchService.getOrCreatePrimaryBranch(ctx);
+  return branch._id;
+}
+
 async function decorateList(ctx, meds) {
-  const stockMap = await inventoryService.availabilityMap(ctx, { medicineIds: meds.map((m) => m._id) });
+  const stockMap = await inventoryService.availabilityMap(ctx, {
+    medicineIds: meds.map((m) => m._id),
+    branchId: await storeBranchId(ctx),
+  });
   return meds.map((m) => publicMedicine(ctx, m, stockMap[String(m._id)]));
 }
 
@@ -126,7 +143,7 @@ async function product(slug, medicineId) {
   const { ctx } = await resolveStore(slug);
   const med = await tenantRepo(Medicine, ctx, { audit: false }).findOne({ _id: medicineId, active: { $ne: false } });
   if (!med) throw new AppError(404, 'Medicine not found');
-  const stockMap = await inventoryService.availabilityMap(ctx, { medicineIds: [med._id] });
+  const stockMap = await inventoryService.availabilityMap(ctx, { medicineIds: [med._id], branchId: await storeBranchId(ctx) });
   return publicMedicine(ctx, med.toObject(), stockMap[String(med._id)]);
 }
 
@@ -154,6 +171,10 @@ async function verifyOtp(slug, { email, code, name } = {}) {
     clinicId: clinic.clinicId,
     patientId: String(patient._id),
     email: patient.email || contact,
+    // Storefront audience ONLY. This flow will match a shopper onto an existing clinical chart
+    // (findOrCreatePatient), which the portal deliberately refuses to do — so this token must
+    // never be replayed against /api/portal to read prescriptions, lab reports or invoices.
+    aud: patientSession.AUDIENCE.STORE,
     exp: Date.now() + (config.patientSessionTtlHours || 24) * 3600 * 1000,
   });
   return { token, patient: { id: String(patient._id), name: patient.name, email: patient.email || contact } };

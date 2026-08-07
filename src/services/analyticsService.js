@@ -1,7 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { Invoice, Appointment, Patient, Doctor, Expense, AvailabilityBlock } = require('../models');
+const { Invoice, Appointment, Patient, Doctor, Expense, PharmacyExpense, AvailabilityBlock } = require('../models');
 const { planHasFeature } = require('../config/plans');
 
 /**
@@ -178,7 +178,7 @@ async function overview(ctx, { from, to, branchId, plan } = {}) {
   const months = monthKeys(6, end);
   const monthStart = new Date(end.getFullYear(), end.getMonth() - 5, 1);
 
-  const [heatmapAgg, serviceAgg, utilization, newPatientsAgg, visitsAgg, revenueMonthAgg, expenseMonthAgg] = await Promise.all([
+  const [heatmapAgg, serviceAgg, utilization, newPatientsAgg, visitsAgg, revenueMonthAgg, expenseMonthAgg, pharmacyExpenseMonthAgg] = await Promise.all([
     // Bookings + no-shows per weekday × hour over the range.
     Appointment.aggregate([
       { $match: apptMatch },
@@ -230,6 +230,16 @@ async function overview(ctx, { from, to, branchId, plan } = {}) {
           { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$date', timezone: TZ } }, amount: { $sum: '$amount' } } },
         ])
       : Promise.resolve(null),
+    // Pharmacy costs belong in the SAME P&L. Pharmacy sales already flow into revenue through the
+    // invoices that dispensing and store orders create, so omitting PharmacyExpense inflated an
+    // Ultra clinic's net profit by the entire pharmacy gross. Gated on the pharmacy tier because
+    // lower tiers have no such records.
+    planHasFeature(plan, 'PHARMACY_MANAGEMENT')
+      ? PharmacyExpense.aggregate([
+          { $match: { clinicId, deletedAt: null, date: { $gte: monthStart, $lte: end } } },
+          { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$date', timezone: TZ } }, amount: { $sum: '$amount' } } },
+        ])
+      : Promise.resolve(null),
   ]);
 
   // $dayOfWeek is 1=Sun..7=Sat → normalize to 0..6.
@@ -243,8 +253,21 @@ async function overview(ctx, { from, to, branchId, plan } = {}) {
   let pnl = null;
   if (revenueMonthAgg && expenseMonthAgg) {
     const rev = byMonth(revenueMonthAgg, 'amount');
-    const exp = byMonth(expenseMonthAgg, 'amount');
-    pnl = months.map((m, i) => ({ month: m, revenue: rev[i], expenses: exp[i], net: Math.round((rev[i] - exp[i]) * 100) / 100 }));
+    const clinicExp = byMonth(expenseMonthAgg, 'amount');
+    // Pharmacy costs are part of the same P&L (their revenue already is). Null on non-pharmacy
+    // tiers, which contributes zero rather than breaking the series.
+    const rxExp = pharmacyExpenseMonthAgg ? byMonth(pharmacyExpenseMonthAgg, 'amount') : months.map(() => 0);
+    pnl = months.map((m, i) => {
+      const expenses = Math.round((clinicExp[i] + rxExp[i]) * 100) / 100;
+      return {
+        month: m,
+        revenue: rev[i],
+        expenses,
+        clinicExpenses: clinicExp[i],
+        pharmacyExpenses: rxExp[i],
+        net: Math.round((rev[i] - expenses) * 100) / 100,
+      };
+    });
   }
 
   return {

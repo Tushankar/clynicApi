@@ -161,7 +161,7 @@ async function book(ctx, data) {
   // are created at the desk, so they need no bell. Best-effort — never blocks the booking.
   if (source !== 'walkin') {
     require('./notificationService')
-      .emit(ctx, { type: 'appointment_booked', message: `New ${source} booking: ${patient.name || 'patient'} with ${doctor.name}, ${fmtWhen(appointment.scheduledAt)}`, link: '/appointments' })
+      .emit(ctx, { type: 'appointment_booked', message: `New ${source} booking: ${patient.name || 'patient'} with ${doctor.name}, ${fmtWhen(appointment.scheduledAt)}`, link: '/dashboard/appointments' })
       .catch(() => {});
   }
   emitApptChanged(ctx, appointment, 'created');
@@ -242,9 +242,9 @@ async function transition(ctx, id, toStatus, { reason } = {}) {
   const notify = require('./notificationService');
   if (toStatus === 'cancelled' || toStatus === 'no_show') {
     await reminderService.cancelAppointmentReminders(ctx, id);
-    notify.emit(ctx, { type: 'appointment_cancelled', message: `Appointment ${toStatus.replace('_', '-')}: ${updated.patientName || 'patient'}`, link: '/appointments' }).catch(() => {});
+    notify.emit(ctx, { type: 'appointment_cancelled', message: `Appointment ${toStatus.replace('_', '-')}: ${updated.patientName || 'patient'}`, link: '/dashboard/appointments' }).catch(() => {});
   } else if (toStatus === 'confirmed') {
-    notify.emit(ctx, { type: 'appointment_confirmed', message: `Appointment confirmed: ${updated.patientName || 'patient'}`, link: '/appointments' }).catch(() => {});
+    notify.emit(ctx, { type: 'appointment_confirmed', message: `Appointment confirmed: ${updated.patientName || 'patient'}`, link: '/dashboard/appointments' }).catch(() => {});
   } else if (toStatus === 'completed') {
     // Maintain the CRM/retention denormalized fields (§5.13) that power lapsed/repeat/
     // analytics. System-managed counters — not audited per-bump (like queue/notifications).

@@ -49,7 +49,13 @@ const notificationSchema = new mongoose.Schema(
     },
     message: { type: String, required: true, trim: true },
     link: { type: String, trim: true },
+    // `read` is authoritative only for a TARGETED notification (recipientId set).
     read: { type: Boolean, default: false },
+    // Per-user read state for BROADCAST rows (recipientId null), which are shared by the whole
+    // clinic. A single boolean meant the first staff member to hit "Mark all read" cleared the
+    // bell for everyone — including alerts only one role acts on, such as a failed refund. Read
+    // state for a shared row therefore has to be per-user.
+    readBy: { type: [String], default: [] },
     // Optional idempotency key. When set, notificationService.emit skips creating a new row if an
     // UNREAD notification with the same clinicId+dedupeKey already exists — this stops duplicate
     // bell spam from recurring emitters (e.g. the pharmacy low-stock / near-expiry re-checks that
@@ -63,6 +69,7 @@ const notificationSchema = new mongoose.Schema(
 clinicScoped(notificationSchema);
 branchAware(notificationSchema);
 notificationSchema.index({ clinicId: 1, recipientId: 1, read: 1, createdAt: -1 });
+notificationSchema.index({ clinicId: 1, recipientId: 1, readBy: 1 }); // per-user unread on broadcasts
 notificationSchema.index({ clinicId: 1, dedupeKey: 1, read: 1 }); // fast unread-by-key de-dup lookup
 
 module.exports = mongoose.model('Notification', notificationSchema);

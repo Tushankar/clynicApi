@@ -5,6 +5,8 @@ const portalService = require('../services/portalService');
 
 const requestLogin = asyncHandler(async (req, res) => res.json(await portalService.requestLogin(req.params.slug, req.body.contact || req.body.email)));
 const verifyLogin = asyncHandler(async (req, res) => res.json(await portalService.verifyLogin(req.params.slug, req.body.contact || req.body.email, req.body.code)));
+// Step 2 of a shared-contact login: pick which person is signing in.
+const selectPatient = asyncHandler(async (req, res) => res.json(await portalService.selectPatient(req.params.slug, req.body.selectionToken, req.body.patientId)));
 
 const me = asyncHandler(async (req, res) => res.json(await portalService.me(req)));
 const prescriptions = asyncHandler(async (req, res) => res.json({ items: await portalService.prescriptions(req) }));
@@ -18,4 +20,4 @@ const payOrder = asyncHandler(async (req, res) => res.json(await portalService.p
 const payVerify = asyncHandler(async (req, res) => res.json(await portalService.payInvoiceVerify(req, { orderId: req.body.orderId, paymentId: req.body.paymentId, signature: req.body.signature })));
 const payMockSign = asyncHandler(async (req, res) => res.json(await portalService.payMockSign(req, { orderId: req.body.orderId, paymentId: req.body.paymentId })));
 
-module.exports = { requestLogin, verifyLogin, me, prescriptions, invoices, appointments, reports, reportSignedUrl, uploadReport, queue, payOrder, payVerify, payMockSign };
+module.exports = { requestLogin, verifyLogin, selectPatient, me, prescriptions, invoices, appointments, reports, reportSignedUrl, uploadReport, queue, payOrder, payVerify, payMockSign };

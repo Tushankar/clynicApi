@@ -12,13 +12,20 @@ const signing = require('../lib/signing');
 async function streamReport(req, res, next) {
   try {
     const { report, stream } = await reportService.streamReport(req.query.t, req.params.id);
-    res.setHeader('Content-Type', report.mimeType || 'application/octet-stream');
+    // Defence in depth against a stored file whose declared type is not what it claims. Only
+    // types we are willing to RENDER are echoed back and shown inline; anything else is served as
+    // an opaque download so it can never execute in the API's origin. Uploads are also filtered
+    // at the route (reportRoutes ALLOWED_REPORT_MIME), but legacy rows predate that check.
+    const declared = report.mimeType || '';
+    const renderable = /^(image\/(jpeg|png|webp|gif|heic|heif|tiff)|application\/pdf)$/i.test(declared);
+    res.setHeader('Content-Type', renderable ? declared : 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     // Safe Content-Disposition: ASCII fallback + RFC5987 filename* (encodeURIComponent
     // percent-encodes any control chars, so no raw CR/LF can reach the header).
     const raw = report.originalName || 'report';
     const ascii = (raw.replace(/[^\w.\-]+/g, '_').slice(0, 120)) || 'report';
     const enc = encodeURIComponent(raw).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16)}`);
-    res.setHeader('Content-Disposition', `inline; filename="${ascii}"; filename*=UTF-8''${enc}`);
+    res.setHeader('Content-Disposition', `${renderable ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${enc}`);
     res.setHeader('Cache-Control', 'private, no-store'); // never cache medical files
     if (report.size) res.setHeader('Content-Length', report.size);
     stream.on('error', () => {

@@ -19,6 +19,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: con
 // Public login
 router.post('/c/:slug/login/request', loginLimiter, ctrl.requestLogin);
 router.post('/c/:slug/login/verify', loginLimiter, ctrl.verifyLogin);
+// Step 2 when one phone/email maps to several people (shared household contact): exchange the
+// short-lived selection token for a session bound to the person who is actually signing in.
+router.post('/c/:slug/login/select', loginLimiter, ctrl.selectPatient);
 
 // Authenticated patient routes
 router.use(patientAuth);

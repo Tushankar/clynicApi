@@ -4,6 +4,15 @@
 FROM node:20-alpine AS base
 WORKDIR /app
 ENV NODE_ENV=production
+# Container clock. The app mixes two date models: analytics/dashboard bucket with an explicit
+# 'Asia/Kolkata' timezone, while lib/datetime.js (slot generation, queue-token day keys, day-close,
+# check-in, recalls) uses SERVER-LOCAL time. An Alpine image defaults to UTC, which puts those two
+# 5h30m apart — wrong booking slots, tokens resetting at 05:30 IST, and a cash register that
+# disagrees with analytics. Pinning IST makes them consistent.
+# NOTE: this is a stopgap for the current single-region (India) deployment. Serving clinics in
+# another timezone requires a per-clinic `Clinic.timezone` and one tz-aware date helper.
+ENV TZ=Asia/Kolkata
+RUN apk add --no-cache tzdata && cp /usr/share/zoneinfo/Asia/Kolkata /etc/localtime && echo "Asia/Kolkata" > /etc/timezone
 
 # Install dependencies first (better layer caching). package-lock.json is copied when present.
 # Driver SDKs live in optionalDependencies; --no-optional can be passed at build time to skip them.

@@ -15,7 +15,7 @@ async function storePatientAuth(req, res, next) {
   try {
     const h = req.headers.authorization || '';
     const token = h.startsWith('Bearer ') ? h.slice(7) : req.query.t || null;
-    const data = patientSession.verify(token);
+    const data = patientSession.verifyFor(token, patientSession.AUDIENCE.STORE);
     if (!data || !data.clinicId || !data.patientId) throw new AppError(401, 'Patient session required');
 
     const clinic = await Clinic.findOne({ clinicId: data.clinicId }).lean();

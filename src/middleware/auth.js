@@ -171,6 +171,17 @@ function requireAuth(req, res, next) {
   if (!req.ctx || !req.ctx.clinicId || !req.auth?.userId) {
     return next(new AppError(401, 'Not authenticated'));
   }
+  // A suspended clinic is locked out of the staff app. There was previously no way for the
+  // platform to stop serving a clinic at all — non-payment, abuse and offboarding had no lever.
+  // Data is untouched; this only closes the door, and the message says who to contact.
+  if (req.clinic?.status === 'suspended') {
+    return next(
+      new AppError(403, 'This clinic account is suspended. Please contact support to restore access.', {
+        error: 'clinic_suspended',
+        suspendedAt: req.clinic.suspendedAt || null,
+      })
+    );
+  }
   next();
 }
 

@@ -293,17 +293,38 @@ test('[fix] a reminder already sent is not re-opened/re-sent on reschedule (no d
   const scheduledAt = new Date(Date.now() + 2 * 24 * 3600 * 1000);
   const appt = await appointmentService.book(ctxARecep, { doctorId: doctorA._id, patientId: p._id, scheduledAt });
 
+  // Assert on THIS appointment's reminders, not on the clinic-wide counters. Earlier tests in
+  // this file also book appointments in org_A, so their reminders fall due at the same `now` —
+  // asserting run.sent === 2 made the outcome depend on test order and was intermittently flaky.
+  const mine = () => Reminder.find({ appointmentId: appt._id }).sort({ sendAt: 1 }).lean();
+
+  const before = await mine();
+  assert.equal(before.length, 2, 'a 24h and a 2h reminder were scheduled');
+  assert.ok(before.every((r) => r.status === 'scheduled'), 'both start scheduled');
+
   emailAdapter.clearSentLog();
-  const run1 = await reminderService.processDueReminders({ clinicId: 'org_A', now: scheduledAt });
-  assert.equal(run1.sent, 2, 'both reminders sent the first time');
+  await reminderService.processDueReminders({ clinicId: 'org_A', now: scheduledAt });
+  const afterRun1 = await mine();
+  assert.ok(afterRun1.every((r) => r.status === 'sent'), 'both of THIS appointment’s reminders were sent');
 
   // Reschedule AFTER the reminders already fired — must not re-open the sent docs.
   const later = new Date(Date.now() + 3 * 24 * 3600 * 1000);
   await appointmentService.reschedule(ctxARecep, appt._id, later);
+
+  const afterReschedule = await mine();
+  assert.ok(afterReschedule.every((r) => r.status === 'sent'), 'reschedule must not re-open an already-sent reminder');
+
   emailAdapter.clearSentLog();
-  const run2 = await reminderService.processDueReminders({ clinicId: 'org_A', now: later });
-  assert.equal(run2.sent, 0, 'no reminder is re-sent after reschedule-of-already-sent');
-  assert.equal(emailAdapter.getSentLog().length, 0, 'no duplicate emails');
+  await reminderService.processDueReminders({ clinicId: 'org_A', now: later });
+  const afterRun2 = await mine();
+  assert.ok(afterRun2.every((r) => r.status === 'sent'), 'still sent — never re-delivered');
+  // Only REMINDER mail matters here. reschedule() also fires an "Appointment rescheduled" notice,
+  // and it is dispatched fire-and-forget — so it can land either side of clearSentLog(). Counting
+  // every message to this patient therefore raced that notice, which is what made this test flaky.
+  const duplicateReminders = emailAdapter
+    .getSentLog()
+    .filter((m) => m.to === 'remind@ex.com' && /reminder/i.test(m.subject || ''));
+  assert.equal(duplicateReminders.length, 0, 'no reminder email is re-sent after reschedule');
 
   console.log('  ✓ [fix] sent reminders are never re-opened on reschedule (idempotent delivery)');
 });

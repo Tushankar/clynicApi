@@ -36,20 +36,66 @@ async function verifyLogin(slug, contact, code) {
   await otpService.verifyOtp(clinic.clinicId, contact, code); // throws on wrong/expired
   const ctx = { clinicId: clinic.clinicId, actorId: 'portal', actorRole: null };
   const c = otpService.classify(contact);
-  // Look up the patient by whichever identity they verified, BEFORE consuming the code — otherwise a
-  // correct code for a contact with no record burns the single-use OTP.
-  const patient = c && c.kind === 'email'
-    ? await tenantRepo(Patient, ctx).findOne({ email: c.identifier })
-    : await patientService.findByContact(ctx, { phone: c ? c.identifier : contact });
-  if (!patient) throw new AppError(404, 'No records found for that email or number. Please book an appointment first.');
+  // Look up BEFORE consuming the code — otherwise a correct code for a contact with no record
+  // burns the single-use OTP.
+  // EVERY patient on this contact, not the first one Mongo happens to return. A shared household
+  // phone/email legitimately maps to several distinct records (findOrCreatePatient creates them on
+  // purpose), and silently binding the session to one of them let a family member land in another
+  // person's chart — prescriptions, lab reports, invoices.
+  const matches = c && c.kind === 'email'
+    ? await patientService.findAllByContact(ctx, { email: c.identifier })
+    : await patientService.findAllByContact(ctx, { phone: c ? c.identifier : contact });
+  if (!matches.length) throw new AppError(404, 'No records found for that email or number. Please book an appointment first.');
   await otpService.consumeVerified(clinic.clinicId, contact); // single-use — consumed only on success
+
+  if (matches.length > 1) {
+    // Ask WHO is signing in. The selection token proves the OTP was verified (the code is now
+    // spent) and pins the allowed candidates, so the follow-up call cannot name any other patient.
+    const selectionToken = patientSession.sign({
+      clinicId: clinic.clinicId,
+      candidateIds: matches.map((p) => String(p._id)),
+      aud: patientSession.AUDIENCE.PORTAL_SELECT,
+      exp: Date.now() + 5 * 60 * 1000, // 5 minutes to choose
+    });
+    return {
+      needsSelection: true,
+      selectionToken,
+      // Name only — just enough to recognise yourself, no other identifying detail.
+      candidates: matches.map((p) => ({ id: String(p._id), name: p.name })),
+    };
+  }
+
+  return issueSession(clinic.clinicId, matches[0]);
+}
+
+/** Mint the real portal session for a resolved patient. */
+function issueSession(clinicId, patient) {
   const token = patientSession.sign({
-    clinicId: clinic.clinicId,
+    clinicId,
     patientId: String(patient._id),
     email: patient.email || null,
+    aud: patientSession.AUDIENCE.PORTAL, // this token must not unlock the storefront session
     exp: Date.now() + config.patientSessionTtlHours * 3600 * 1000,
   });
   return { token, patient: { id: String(patient._id), name: patient.name, email: patient.email || null } };
+}
+
+/**
+ * Second step of a disambiguated login: exchange the selection token + chosen patient for a
+ * session. The chosen id MUST be one of the candidates the selection token was minted with, so a
+ * tampered request cannot reach an unrelated patient.
+ */
+async function selectPatient(slug, selectionToken, patientId) {
+  const clinic = await resolveClinic(slug);
+  const data = patientSession.verifyFor(selectionToken, patientSession.AUDIENCE.PORTAL_SELECT);
+  if (!data || data.clinicId !== clinic.clinicId) throw new AppError(401, 'That sign-in attempt expired. Please request a new code.');
+  if (!Array.isArray(data.candidateIds) || !data.candidateIds.includes(String(patientId))) {
+    throw new AppError(403, 'Please choose one of the listed people.');
+  }
+  const ctx = { clinicId: clinic.clinicId, actorId: 'portal', actorRole: null };
+  const patient = await tenantRepo(Patient, ctx).findById(patientId);
+  if (!patient) throw new AppError(404, 'Patient not found');
+  return issueSession(clinic.clinicId, patient);
 }
 
 // ---- Patient-scoped reads (req.ctx + req.patient.patientId set by patientAuth) ----
@@ -135,6 +181,7 @@ function payMockSign(req, { orderId, paymentId }) {
 module.exports = {
   requestLogin,
   verifyLogin,
+  selectPatient,
   me,
   prescriptions,
   invoices,

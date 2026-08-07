@@ -1,6 +1,6 @@
 'use strict';
 
-const { planHasFeature } = require('../config/plans');
+const { planHasFeature, effectivePlan } = require('../config/plans');
 
 /**
  * Plan-gate middleware (hard rule 5). The backend is the real lock — never the UI.
@@ -14,16 +14,22 @@ const { planHasFeature } = require('../config/plans');
  */
 function requireFeature(featureKey) {
   return function featureGuard(req, res, next) {
-    const plan = req.clinic?.subscriptionPlan; // set by auth middleware from clinicId
-    if (!plan) {
+    if (!req.clinic?.subscriptionPlan) {
       return res.status(401).json({ error: 'No clinic context' });
     }
+    // Entitlement, not the nominal tier: a cancelled or long-past_due clinic falls back to Basic.
+    // See config/plans.js effectivePlan.
+    const plan = effectivePlan(req.clinic);
     if (!planHasFeature(plan, featureKey)) {
+      const lapsed = plan !== req.clinic.subscriptionPlan;
       return res.status(403).json({
-        error: 'upgrade_required',
+        error: lapsed ? 'subscription_inactive' : 'upgrade_required',
         feature: featureKey,
         plan,
-        message: 'This feature is not available on your current plan.',
+        paidPlan: req.clinic.subscriptionPlan,
+        message: lapsed
+          ? 'Your subscription is not active, so paid features are paused. Update your payment method to restore them.'
+          : 'This feature is not available on your current plan.',
       });
     }
     next();

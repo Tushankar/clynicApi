@@ -41,9 +41,12 @@ const adapter = pickAdapter();
 function getSignedUrl({ clinicId, key, ttlSeconds = config.fileUrlTtlSeconds, meta = {} } = {}) {
   if (!clinicId || !key) throw new Error('storage.getSignedUrl requires clinicId and key');
   const token = signing.sign({ cid: clinicId, key, exp: Date.now() + ttlSeconds * 1000, ...meta });
+  // NOTE: only an ABSOLUTE url is returned. A server-relative form used to be offered here as
+  // `path`, and three callers used it by mistake — the SPA is served from a different origin than
+  // the API, so a relative path resolves against the SPA and returns index.html (broken images,
+  // and a pharmacist approving a prescription they could not see). Removed so it cannot recur.
   return {
     url: `${config.apiBaseUrl}/api/files/blob?t=${encodeURIComponent(token)}`,
-    path: `/api/files/blob?t=${encodeURIComponent(token)}`,
     expiresInSeconds: ttlSeconds,
   };
 }

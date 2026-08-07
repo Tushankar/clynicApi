@@ -137,7 +137,7 @@ async function reengage(ctx, patientId) {
   if (!okChannels.length) {
     throw new AppError(502, `Could not deliver on any channel (${res.channels.map((c) => c.error).filter(Boolean).join('; ') || 'no channel available'})`);
   }
-  notificationService.emit(ctx, { type: 'other', message: `Re-engagement message sent to ${patient.name}`, link: '/communications' }).catch(() => {});
+  notificationService.emit(ctx, { type: 'other', message: `Re-engagement message sent to ${patient.name}`, link: '/dashboard/communications' }).catch(() => {});
   return { ok: true, patientId: String(patient._id), channel: okChannels[0], channels: okChannels };
 }
 

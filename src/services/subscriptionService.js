@@ -11,6 +11,10 @@ const AppError = require('../utils/AppError');
  * reads req.clinic.subscriptionPlan per request) with NO code change. Plan changes
  * are money events → audited.
  */
+// Days a past_due clinic keeps its paid features while it sorts out payment. Long enough that a
+// card expiring over a weekend never interrupts patient care; short enough to still mean something.
+const GRACE_DAYS = 7;
+
 async function audit(clinicId, entityType, entityId, before, after) {
   await AuditLog.create({ clinicId, actorId: 'system:subscription', actorRole: null, action: 'update', entityType, entityId, before, after });
 }
@@ -28,7 +32,13 @@ async function applySubscription(clinicId, plan, status, extra = {}) {
   await audit(clinicId, 'Subscription', sub._id, { plan: subBefore?.plan, status: subBefore?.status }, { plan, status, ...extra });
 
   const clinicBefore = await Clinic.findOne({ clinicId }).lean();
-  await Clinic.updateOne({ clinicId }, { $set: { subscriptionPlan: plan } }); // ← the loop
+  // Mirror the billing state onto the clinic so requireFeature can resolve entitlement without a
+  // per-request Subscription lookup (see config/plans.js effectivePlan). Going active clears any
+  // dunning grace; going cancelled drops entitlement immediately.
+  await Clinic.updateOne(
+    { clinicId },
+    { $set: { subscriptionPlan: plan, subscriptionStatus: status, graceUntil: null } }
+  ); // ← the loop
   // Only audit the Clinic entity if a clinic row exists (entityId is required). A subscription
   // change for an org with no clinic row still records the Subscription audit above.
   if (clinicBefore?._id) {
@@ -55,6 +65,12 @@ async function handleSubscriptionWebhook(event) {
   } else if (type === 'subscription.halted' || type === 'subscription.pending') {
     const before = await Subscription.findOne({ clinicId }).lean();
     await Subscription.updateOne({ clinicId }, { $set: { status: 'past_due' } });
+    // Start the dunning clock. Until graceUntil passes the clinic keeps every paid feature — we do
+    // not cut a clinic off mid-consultation — after which entitlement falls back to Basic.
+    await Clinic.updateOne(
+      { clinicId },
+      { $set: { subscriptionStatus: 'past_due', graceUntil: new Date(Date.now() + GRACE_DAYS * 24 * 3600 * 1000) } }
+    );
     await audit(clinicId, 'Subscription', before?._id, { status: before?.status }, { status: 'past_due' });
     // A failed charge used to be completely silent (no lock, no message) — surface it so the owner
     // can fix payment BEFORE an eventual cancellation strips their features.
@@ -141,4 +157,77 @@ async function requestPlanChange(ctx, plan) {
   };
 }
 
-module.exports = { applySubscription, handleSubscriptionWebhook, getSubscription, requestPlanChange };
+/**
+ * Platform lever: suspend / restore a clinic.
+ *
+ * There was previously no way to stop serving a clinic — non-payment, abuse and offboarding all
+ * had zero enforcement. Suspension locks the staff app (requireAuth) and leaves every record
+ * intact, so it is fully reversible.
+ */
+async function setClinicSuspended(clinicId, suspended, { reason = '', actorId = null } = {}) {
+  const before = await Clinic.findOne({ clinicId }).lean();
+  if (!before) throw new AppError(404, 'Clinic not found');
+  const $set = suspended
+    ? { status: 'suspended', suspendedAt: new Date(), suspendedReason: String(reason || '').slice(0, 300) }
+    : { status: 'active', suspendedAt: null, suspendedReason: '' };
+  await Clinic.updateOne({ clinicId }, { $set });
+  // Attribute the operator, not 'system' — a platform action on a paying customer must be traceable.
+  await AuditLog.create({
+    clinicId,
+    actorId: actorId || 'system:platform',
+    actorRole: null,
+    action: 'update',
+    entityType: 'Clinic',
+    entityId: before._id,
+    before: { status: before.status || 'active' },
+    after: $set,
+  });
+  if (suspended) {
+    require('./notificationService')
+      .emit({ clinicId, actorId: 'system:platform', actorRole: null }, {
+        type: 'other',
+        message: `This clinic account has been suspended${reason ? `: ${reason}` : ''}. Please contact support.`,
+        link: '/dashboard/plan',
+      })
+      .catch(() => {});
+  }
+  return { clinicId, status: $set.status };
+}
+
+/**
+ * Scheduled lifecycle sweep. Two jobs the product never had:
+ *   1. A subscription whose paid period has ELAPSED with no renewal webhook becomes past_due
+ *      (a dropped webhook previously meant premium forever).
+ *   2. A past_due clinic whose grace has run out is notified once that its features have paused.
+ * Entitlement itself is computed live by effectivePlan, so this only moves state + tells people.
+ */
+async function sweepSubscriptions(now = new Date()) {
+  let lapsed = 0;
+  const expired = await Subscription.find(
+    { status: 'active', currentPeriodEnd: { $ne: null, $lt: now } },
+    { clinicId: 1 }
+  ).lean();
+  for (const s of expired) {
+    // eslint-disable-next-line no-await-in-loop
+    await Subscription.updateOne({ clinicId: s.clinicId }, { $set: { status: 'past_due' } });
+    // eslint-disable-next-line no-await-in-loop
+    await Clinic.updateOne(
+      { clinicId: s.clinicId },
+      { $set: { subscriptionStatus: 'past_due', graceUntil: new Date(now.getTime() + GRACE_DAYS * 24 * 3600 * 1000) } }
+    );
+    // eslint-disable-next-line no-await-in-loop
+    await notifyPastDue(s.clinicId).catch(() => {});
+    lapsed += 1;
+  }
+  return { lapsed };
+}
+
+module.exports = {
+  applySubscription,
+  handleSubscriptionWebhook,
+  getSubscription,
+  requestPlanChange,
+  setClinicSuspended,
+  sweepSubscriptions,
+  GRACE_DAYS,
+};

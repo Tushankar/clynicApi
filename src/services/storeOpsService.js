@@ -4,6 +4,7 @@ const { MedicineOrder } = require('../models');
 const { tenantRepo } = require('../lib/TenantRepository');
 const dispenseService = require('./dispenseService');
 const storeOrderService = require('./storeOrderService');
+const invoiceService = require('./invoiceService');
 const alertService = require('./pharmacyAlertService');
 const notificationService = require('./notificationService');
 const storage = require('../lib/storage');
@@ -38,7 +39,10 @@ async function get(ctx, id) {
   const view = storeOrderService.orderView(order, { paid });
   // Pharmacist can view the uploaded prescription via a short-lived signed URL (hard rule 3 — private).
   if (order.prescription && order.prescription.storageKey) {
-    view.prescriptionUrl = storage.getSignedUrl({ clinicId: ctx.clinicId, key: order.prescription.storageKey, meta: { mime: order.prescription.mimeType || 'application/octet-stream' } }).path;
+    // .url (absolute), never .path — the SPA is served from a different origin than the API, so a
+    // relative path resolves against the SPA and returns index.html. The pharmacist must actually
+    // SEE the prescription they are verifying (rule 3 + Schedule-H compliance).
+    view.prescriptionUrl = storage.getSignedUrl({ clinicId: ctx.clinicId, key: order.prescription.storageKey, meta: { mime: order.prescription.mimeType || 'application/octet-stream' } }).url;
   }
   return view;
 }
@@ -121,6 +125,32 @@ async function cancel(ctx, id, reason) {
   if (!order) throw new AppError(404, 'Order not found');
   if (order.status === 'fulfilled') throw new AppError(400, 'A fulfilled order cannot be cancelled here (issue a refund in billing)');
   const saved = await repo(ctx).updateById(id, { status: 'cancelled', notes: [order.notes, reason ? `Cancelled: ${String(reason).slice(0, 200)}` : ''].filter(Boolean).join(' · ') });
+
+  // Void the order's invoice so a cancelled order stops appearing as an outstanding due. Cancel
+  // used to leave the invoice live and payable, so the clinic kept billing for goods it had
+  // decided not to ship. Only an UNPAID invoice is voided here; if money was already captured the
+  // invoice is left intact and a refund is required, which is a deliberate human decision.
+  if (order.invoiceId) {
+    try {
+      const alreadyPaid = await storeOrderService.invoicePaid(ctx, order.invoiceId);
+      if (!alreadyPaid) {
+        await invoiceService.softDelete(ctx, order.invoiceId);
+      } else {
+        notificationService
+          .emit(ctx, {
+            type: 'other',
+            message: `Order ${order.orderNumber} was cancelled but its invoice is already PAID — a refund is required.`,
+            link: '/dashboard/billing',
+          })
+          .catch(() => {});
+      }
+    } catch (err) {
+      // Never let invoice cleanup undo the cancellation itself; surface it for reconciliation.
+      // eslint-disable-next-line no-console
+      console.error(`[storeOpsService] cancel: invoice ${order.invoiceId} not voided for order ${order._id}:`, err?.message || err);
+    }
+  }
+
   notificationService.emit(ctx, { type: 'order_status', message: `Order ${order.orderNumber} was cancelled`, recipientType: 'patient', recipientId: String(order.patientId) }).catch(() => {});
   return storeOrderService.orderView(saved);
 }

@@ -17,6 +17,11 @@ const queueEntrySchema = new mongoose.Schema(
     doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor' },
     patientName: { type: String, trim: true }, // denormalized for the TV display
     tokenNumber: { type: Number },
+    // The clinic-day this entry belongs to ('YYYY-MM-DD'). The live queue is a TODAY view, but it
+    // used to be selected purely by status — so an entry left 'waiting' or 'in_consultation' at
+    // closing time stayed live forever and collided with the next day's token numbers (tokens
+    // restart at 1 daily). Scoping reads by dayKey makes the queue self-clearing.
+    dayKey: { type: String, index: true },
     status: { type: String, enum: QUEUE_STATUSES, default: 'waiting', required: true },
     calledAt: { type: Date },
     startedAt: { type: Date },
@@ -30,6 +35,7 @@ clinicScoped(queueEntrySchema);
 branchAware(queueEntrySchema, { required: true });
 
 queueEntrySchema.index({ clinicId: 1, branchId: 1, status: 1, createdAt: 1 });
+queueEntrySchema.index({ clinicId: 1, branchId: 1, dayKey: 1, status: 1 }); // the live "today" queue
 queueEntrySchema.index({ clinicId: 1, appointmentId: 1 }, { unique: true });
 
 module.exports = mongoose.model('QueueEntry', queueEntrySchema);

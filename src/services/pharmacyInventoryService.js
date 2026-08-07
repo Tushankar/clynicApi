@@ -26,9 +26,14 @@ function medicineRepo(ctx) {
  * id → { available, expiringSoonQty, expiredQty, batchCount, nearestExpiry }. Expired stock is
  * excluded from `available` (never sellable, §5). Pass { medicineIds } to scope the scan.
  */
-async function availabilityMap(ctx, { medicineIds } = {}) {
+async function availabilityMap(ctx, { medicineIds, branchId } = {}) {
   const filter = {};
   if (medicineIds && medicineIds.length) filter.medicineId = { $in: medicineIds };
+  // Stock is held PER BRANCH and dispensing deducts per branch (dispenseService.allocateFEFO), so
+  // any caller that will later fulfil from a specific branch must scope the count to that branch.
+  // Summing clinic-wide here is what let the storefront advertise stock held at another branch,
+  // take payment for it, and then fail fulfilment with no refund path.
+  if (branchId) filter.branchId = branchId;
   const batches = await tenantRepo(InventoryBatch, ctx, { audit: false }).find(filter, { lean: true });
   const now = Date.now();
   const soonCutoff = now + NEAR_EXPIRY_DAYS * DAY_MS;

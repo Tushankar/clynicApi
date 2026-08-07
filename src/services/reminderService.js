@@ -393,7 +393,7 @@ async function _deliver(reminderId, now = new Date()) {
 
     // In-app notification feed event (best-effort).
     require('./notificationService')
-      .emit({ clinicId: claimed.clinicId, actorId: null, actorRole: null }, { type: 'reminder_sent', message: `Reminder sent to ${claimed.payload.to}`, link: '/appointments' })
+      .emit({ clinicId: claimed.clinicId, actorId: null, actorRole: null }, { type: 'reminder_sent', message: `Reminder sent to ${claimed.payload.to}`, link: '/dashboard/appointments' })
       .catch(() => {});
     return 'sent';
   } catch (err) {

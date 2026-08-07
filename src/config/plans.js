@@ -99,6 +99,33 @@ const LIMITS = {
   ultra_premium: { maxDoctors: Infinity, maxBranches: Infinity }, // superset of premium
 };
 
+/**
+ * The plan a clinic is ENTITLED to right now — as opposed to the tier it is nominally on.
+ *
+ * `clinics.subscriptionPlan` records what was bought; it says nothing about whether the clinic is
+ * still paying. Billing state used to be written (`Subscription.status = 'past_due'`) and then
+ * read by nothing, so a failed card cost the business nothing and the clinic kept every premium
+ * feature forever. Entitlement is resolved here, once, so every gate agrees:
+ *
+ *   - cancelled                      -> 'basic'
+ *   - past_due AND past its grace    -> 'basic'
+ *   - past_due INSIDE its grace      -> the paid plan (never cut a clinic off mid-consultation)
+ *   - anything else                  -> the paid plan
+ *
+ * Downgrading to 'basic' rather than blocking is deliberate: the clinic keeps its patients, its
+ * queue and its billing, and loses only the paid extras until it settles up.
+ */
+function effectivePlan(clinic, now = new Date()) {
+  const paid = clinic?.subscriptionPlan || 'basic';
+  const status = clinic?.subscriptionStatus || 'active';
+  if (status === 'cancelled') return 'basic';
+  if (status === 'past_due') {
+    const grace = clinic?.graceUntil ? new Date(clinic.graceUntil) : null;
+    if (!grace || now > grace) return 'basic';
+  }
+  return paid;
+}
+
 function planHasFeature(plan, featureKey) {
   const allowed = FEATURES[featureKey] || [];
   if (allowed.includes(plan)) return true;
@@ -132,6 +159,7 @@ module.exports = {
   FEATURES,
   LIMITS,
   planHasFeature,
+  effectivePlan,
   resolveFeatures,
   limitsForPlan,
 };

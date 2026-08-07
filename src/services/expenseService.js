@@ -23,11 +23,27 @@ async function list(ctx, { from, to, category, branchId } = {}) {
   if (from || to) {
     filter.date = {};
     if (from) filter.date.$gte = new Date(from);
-    if (to) filter.date.$lte = new Date(to);
+    if (to) {
+      // Inclusive end-of-day: a date-only 'to' would otherwise exclude same-day expenses (which
+      // carry a real timestamp), silently dropping a full day from the period totals.
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      filter.date.$lte = end;
+    }
   }
   const items = await repo(ctx).find(filter, { sort: { date: -1 }, limit: 500, lean: true });
-  const total = round2(items.reduce((s, e) => s + (e.amount || 0), 0));
-  return { items, total };
+
+  // The total must cover the WHOLE filtered set, not just the 500-row display page. Reducing over
+  // `items` meant a clinic past 500 expenses saw an under-reported "Total recorded" presented as
+  // authoritative. Clinic-scoped aggregation (tenantRepo exposes no aggregate(), so clinicId +
+  // deletedAt are scoped explicitly here, exactly as analyticsService does).
+  // This mirrors the fix already applied in pharmacyExpenseService.
+  const agg = await Expense.aggregate([
+    { $match: { clinicId: ctx.clinicId, deletedAt: null, ...filter } },
+    { $group: { _id: null, amount: { $sum: '$amount' } } },
+  ]);
+  const total = round2(agg[0]?.amount || 0);
+  return { items, total, truncated: items.length >= 500 };
 }
 
 async function create(ctx, { date, category, description, amount, method, note, branchId } = {}) {

@@ -1,0 +1,27 @@
+name: CI
+
+# Runs on the clynicApi repository. The previous workflow lived at the parent folder, which is
+# NOT inside this git repo, so it was never pushed and never executed — CI appeared to exist while
+# nothing ever ran. Paths are repo-relative here.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    name: API — tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # Optional driver SDKs (razorpay / anthropic / groq) are not needed: the suite runs the
+      # mock payment + AI drivers and local storage.
+      - name: Install
+        run: npm ci --no-optional
+      - name: Test
+        run: npm test

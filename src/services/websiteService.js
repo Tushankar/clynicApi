@@ -58,6 +58,12 @@ const imageRef = (v) => {
 };
 /** Back-compat alias: older call sites named this `imageUrl`. */
 const imageUrl = imageRef;
+
+// Signed-URL lifetime for PUBLIC website assets (logo, hero, doctor photos, page images).
+// 30 days: these are marketing images on a page that must survive being cached, crawled, shared
+// and left open. Patient documents keep the short default TTL — see resolveImage below.
+const PUBLIC_ASSET_TTL_SECONDS = 30 * 24 * 60 * 60;
+
 /**
  * Turn a stored reference into something a browser can actually load. Uploads resolve to the
  * ABSOLUTE signed URL (`.url`, built from API_BASE_URL) — the public site is served from a
@@ -68,7 +74,12 @@ function resolveImage(clinicId, ref) {
   const key = uploadKeyOf(s);
   if (key) {
     try {
-      return storage.getSignedUrl({ clinicId, key, meta: { mime: 'image/jpeg' } }).url;
+      // Public marketing assets are NOT medical files: they must outlive the page view. The
+      // default signed-URL TTL is 120s (config.fileUrlTtlSeconds), which meant every logo, hero
+      // and doctor photo on a live clinic site broke two minutes after the JSON was served — and
+      // never loaded at all for crawlers or a cached copy. Rule 3's short TTL still governs
+      // patient documents; this surface gets a long one.
+      return storage.getSignedUrl({ clinicId, key, ttlSeconds: PUBLIC_ASSET_TTL_SECONDS, meta: { mime: 'image/jpeg' } }).url;
     } catch {
       return ''; // a stale key must never break the page render
     }
@@ -353,7 +364,13 @@ async function updatePage(ctx, pageSlug, patch) {
   const pages = clinic.website?.pages || [];
   const idx = pages.findIndex((p) => p.slug === pageSlug);
   if (idx < 0) throw new AppError(404, 'Page not found');
-  const merged = sanitizePage({ ...pages[idx], ...patch, slug: pages[idx].slug });
+  // `pages` comes from a HYDRATED clinic doc (loadClinic -> repo.findOne, lean:false), so each
+  // entry is a Mongoose subdocument whose schema fields live on the prototype, not as own
+  // properties. Spreading it directly copies only internals ($__, _doc, __parentArray, …), so
+  // title/body resolved to undefined and sanitizePage wrote them back as '' — a publish toggle
+  // silently destroyed the page. toObject() gives the real fields.
+  const existing = typeof pages[idx]?.toObject === 'function' ? pages[idx].toObject() : pages[idx];
+  const merged = sanitizePage({ ...existing, ...patch, slug: existing.slug });
   const next = pages.slice();
   next[idx] = merged;
   await repo(ctx).updateById(clinic._id, { 'website.pages': next });

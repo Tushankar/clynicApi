@@ -117,6 +117,24 @@ const clinicSchema = new mongoose.Schema(
     website: { type: websiteSchema, default: () => ({}) }, // §8.6 public website + CMS content
     crmSettings: { type: crmSettingsSchema, default: () => ({}) }, // CRM campaign automations
     subscriptionPlan: { type: String, enum: PLANS, default: 'basic', required: true },
+
+    // ---- Subscription lifecycle, denormalised onto the clinic ------------------------------
+    // requireFeature runs on every request and only has req.clinic, so the state it needs to make
+    // a decision lives here rather than costing a Subscription lookup per request. The Subscription
+    // document remains the source of truth; subscriptionService writes both together.
+
+    // Platform-operator lifecycle. 'suspended' locks the staff app (non-payment, abuse, offboarding)
+    // while leaving data intact — there was previously no lever at all to stop serving a clinic.
+    status: { type: String, enum: ['active', 'suspended'], default: 'active', index: true },
+    suspendedAt: { type: Date, default: null },
+    suspendedReason: { type: String, trim: true, default: '' },
+
+    // Mirror of Subscription.status. Written but never enforced before, so a clinic whose card
+    // failed kept full premium access indefinitely.
+    subscriptionStatus: { type: String, enum: ['active', 'past_due', 'cancelled'], default: 'active' },
+    // How long a past_due clinic keeps its paid features. Cutting a clinic off mid-consultation is
+    // unacceptable, so dunning gets a window before entitlements drop back to Basic.
+    graceUntil: { type: Date, default: null },
   },
   { timestamps: true }
 );

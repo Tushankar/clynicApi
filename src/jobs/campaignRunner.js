@@ -4,6 +4,8 @@ const campaignService = require('../services/campaignService');
 const recallService = require('../services/recallService');
 const paymentService = require('../services/paymentService');
 const pharmacyAlertService = require('../services/pharmacyAlertService');
+const queueService = require('../services/queueService');
+const subscriptionService = require('../services/subscriptionService');
 
 /**
  * Background tick (§5.13). Every 10 minutes, run due birthday/follow-up automations, due treatment
@@ -32,6 +34,19 @@ function start(intervalMs = 10 * 60 * 1000) {
     pharmacyAlertService.sweepExpiring().catch((err) => {
       // eslint-disable-next-line no-console
       console.error('[pharmacy] expiry sweep tick error', err.message);
+    });
+    // Close out queue entries left active from a previous day (patient walked out, or the doctor
+    // never hit Complete). Reads are day-scoped so these are already invisible, but leaving them
+    // 'waiting' forever corrupts historical queue reporting.
+    queueService.sweepStaleQueues().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[queue] stale sweep tick error', err.message);
+    });
+    // Subscription lifecycle: lapse an elapsed paid period to past_due and start dunning. Without
+    // this a dropped renewal webhook meant premium access forever.
+    subscriptionService.sweepSubscriptions().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[subscriptions] sweep tick error', err.message);
     });
   }, intervalMs);
   timer.unref?.();

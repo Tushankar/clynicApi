@@ -42,9 +42,14 @@ test('local storage: save → signed link → read back → delete', async () =>
 
   // Signed link is short-lived + tokenized (mimics S3 presigned). It points at our own
   // authenticated byte route, never a public path.
+  // getSignedUrl returns an ABSOLUTE url only. It used to also return a server-relative `path`,
+  // which three services used by mistake — the SPA is a different origin than the API, so those
+  // links resolved against the SPA and returned index.html. `path` was removed so it cannot recur.
   const link = storage.getSignedUrl({ clinicId: CLINIC, key: KEY, ttlSeconds: 60 });
-  assert.match(link.path, /^\/api\/files\/blob\?t=/);
-  const token = decodeURIComponent(link.path.split('t=')[1]);
+  assert.equal(link.path, undefined, 'the footgun relative form is not offered');
+  assert.match(link.url, /\/api\/files\/blob\?t=/);
+  assert.match(link.url, /^https?:\/\//, 'signed link is absolute so it works cross-origin');
+  const token = decodeURIComponent(link.url.split('t=')[1]);
   const payload = signing.verify(token);
   assert.ok(payload && payload.cid === CLINIC && payload.key === KEY, 'token binds clinic + key');
 

@@ -163,6 +163,26 @@ function sameName(a, b) {
  * "9000000001" resolve to the same patient (reduces duplicate records from format variations).
  * A phone shorter than 10 digits never matches — preserving "never a substring hijack".
  */
+/**
+ * EVERY patient reachable by a verified contact.
+ *
+ * findByContact returns whichever document Mongo yields first, which is fine for booking (where a
+ * name is also supplied) but wrong for portal login: findOrCreatePatient deliberately creates
+ * SEPARATE records when one phone/email is shared by different people — the household norm — so
+ * "first match" could bind a login session to a family member's chart. Callers that authenticate
+ * must disambiguate instead of guessing.
+ */
+async function findAllByContact(ctx, { email, phone } = {}) {
+  const repo = tenantRepo(Patient, ctx);
+  const e = email ? String(email).toLowerCase().trim() : null;
+  const tail = phoneTail(phone);
+  const or = [];
+  if (e) or.push({ email: e });
+  if (tail.length >= 10) or.push({ phone: { $regex: `${tail}$` } });
+  if (!or.length) return [];
+  return repo.find({ $or: or }, { sort: { createdAt: 1 }, lean: true });
+}
+
 async function findByContact(ctx, { email, phone } = {}) {
   const repo = tenantRepo(Patient, ctx);
   const e = email ? String(email).toLowerCase().trim() : null;
@@ -217,6 +237,7 @@ module.exports = {
   listDeletedPatients,
   restorePatient,
   findByContact,
+  findAllByContact,
   findOrCreatePatient,
   getPatientVisits,
   getPatientDetail,

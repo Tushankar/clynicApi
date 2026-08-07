@@ -18,7 +18,8 @@ const trimTo = (v, max) => (v === undefined || v === null ? undefined : String(v
 const slugify = (s) => String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
 
 function view(ctx, c) {
-  return { ...c, imageUrl: c.imageStorageKey ? storage.getSignedUrl({ clinicId: ctx.clinicId, key: c.imageStorageKey, meta: { mime: 'image/jpeg' } }).path : null };
+  // .url (absolute), never .path — the dashboard is a different origin than the API.
+  return { ...c, imageUrl: c.imageStorageKey ? storage.getSignedUrl({ clinicId: ctx.clinicId, key: c.imageStorageKey, meta: { mime: 'image/jpeg' } }).url : null };
 }
 
 async function list(ctx) {
