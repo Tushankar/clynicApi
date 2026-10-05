@@ -79,6 +79,10 @@ const config = Object.freeze({
   isDev,
   port: Number(process.env.PORT || 5000),
   apiBaseUrl: process.env.API_BASE_URL || `http://localhost:${Number(process.env.PORT || 5000)}`,
+  // Number of reverse proxies in front of the app (Render/Heroku/a load balancer = 1). Express then
+  // takes req.ip from X-Forwarded-For, so the rate limiters key on the real client instead of the
+  // proxy (otherwise every visitor shares one bucket). 0 = no proxy; never trust a spoofable header.
+  trustProxy: Number(process.env.TRUST_PROXY || 0),
   // Allowed CORS origin(s): CLIENT_URL (single) preferred; CORS_ORIGINS (comma list) also honored.
   corsOrigins: (process.env.CLIENT_URL || process.env.CORS_ORIGINS || 'http://localhost:5173')
     .split(',')

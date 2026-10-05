@@ -1,0 +1,110 @@
+# Render Blueprint for clinic-api — Render dashboard → New → Blueprint → pick this repo.
+# Values marked `sync: false` are secrets/URLs: Render asks for them when the Blueprint is created
+# and they are never stored in git. `generateValue: true` makes Render create a random secret once.
+#
+# Plan: `starter` (paid) because the app needs a persistent disk — local file storage (patient
+# files) and the Baileys WhatsApp session live on it, and Render's normal filesystem is wiped on
+# every deploy/restart. Free instances have no disks, sleep after 15 min idle (reminders/WhatsApp
+# stop) and block outbound SMTP. To try the free plan anyway: set plan: free, delete `disk` and
+# `preDeployCommand`, and set STORAGE_DRIVER=s3 (+ AWS vars) and WHATSAPP_DRIVER=none.
+services:
+  - type: web
+    name: clynic-api
+    runtime: node
+    plan: starter
+    region: singapore # closest Render region to India; match your Atlas cluster's region if different
+    branch: main
+    buildCommand: npm ci --omit=dev
+    preDeployCommand: npm run db:indexes # production runs with autoIndex off; idempotent, never drops
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: clynic-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # ---- Core ----
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DEV_AUTH
+        value: "false"
+      - key: API_BASE_URL # https://<this-service>.onrender.com
+        sync: false
+      - key: CLIENT_URL # https://<your-site>.netlify.app (no trailing slash) — CORS origin
+        sync: false
+      - key: PUBLIC_SITE_BASE_URL # same as CLIENT_URL
+        sync: false
+      - key: PLATFORM_DOMAIN # <your-site>.netlify.app (host only, no https://)
+        sync: false
+
+      # ---- Database ----
+      - key: MONGODB_URI
+        sync: false
+
+      # ---- Clerk ----
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+
+      # ---- Secrets required in production (generated once by Render) ----
+      - key: FILE_URL_SECRET
+        generateValue: true
+      - key: PATIENT_JWT_SECRET
+        generateValue: true
+      - key: OTP_HASH_SECRET
+        generateValue: true
+
+      # ---- Email (SMTP_HOST is required in production) ----
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM # e.g. Clynic <you@example.com>
+        sync: false
+
+      # ---- File storage on the persistent disk ----
+      - key: STORAGE_DRIVER
+        value: local
+      - key: LOCAL_STORAGE_DIR
+        value: /var/data/storage
+
+      # ---- Payments (mock is refused in production) ----
+      - key: PAYMENTS_DRIVER
+        value: razorpay
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET # Razorpay webhook → https://<this-service>.onrender.com/api/payments/webhook
+        sync: false
+
+      # ---- Notifications / WhatsApp ----
+      - key: NOTIFY_DEFAULT_CHANNEL
+        value: email
+      - key: WHATSAPP_DRIVER
+        value: baileys
+      - key: BAILEYS_SESSION_DIR
+        value: /var/data/baileys_auth
+
+      # ---- AI assistant ----
+      - key: AI_DRIVER
+        value: groq
+      - key: AI_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_API_KEY
+        sync: false
+
+      # ---- Super-admin analytics (comma-separated Clerk user ids; may be left blank) ----
+      - key: SUPER_ADMIN_IDS
+        sync: false
