@@ -24,6 +24,10 @@ COPY src ./src
 COPY assets ./assets
 COPY scripts ./scripts
 
+# Writable dirs for the non-root user: private file storage (LOCAL_STORAGE_DIR) and the Baileys
+# WhatsApp session (BAILEYS_SESSION_DIR). /app is root-owned, so the app can't create them itself.
+RUN mkdir -p storage baileys_auth && chown node:node storage baileys_auth
+
 # Run as the built-in non-root user.
 USER node
 
